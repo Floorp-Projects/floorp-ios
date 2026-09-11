@@ -256,6 +256,242 @@ class FloorpCIPythonContractTests(unittest.TestCase):
         for marker in japanese_markers:
             self.assertEqual(run.count(marker), 1)
 
+    def test_ubol_private_acceptance_preserves_failed_webkit_topology(self):
+        source = (
+            ROOT
+            / "firefox-ios/firefox-ios-tests/Tests/ClientTests/Coordinators/"
+            "FloorpUBOLWebKitDiagnosticsTests.swift"
+        ).read_text()
+        session = source.split(
+            "private final class FloorpUBOLReleaseAcceptanceSession {\n", 1
+        )[1].split("\nprivate enum FloorpUBOLDNRDiagnosticError", 1)[0]
+        recovery = source.split(
+            "private enum FloorpUBOLPrivateBrowsingRecovery {\n", 1
+        )[1].split(
+            "\n@MainActor\nprivate final class FloorpUBOLReleaseAcceptanceSession", 1
+        )[0]
+        close = session.split("    func close() {\n", 1)[1].split(
+            "\n    private func preserveBrowserEnvironmentForProcessLifetime", 1
+        )[0]
+        preserve_browser = session.split(
+            "    private func preserveBrowserEnvironmentForProcessLifetime(\n", 1
+        )[1].split("\n    func run()", 1)[0]
+        run = session.split(
+            "    func run() async throws -> FloorpUBOLReleaseAcceptanceReport {\n", 1
+        )[1].split("\n    private func prepareInitialExtensionPage", 1)[0]
+        private_browsing = session.split(
+            "    private func inspectPrivateBrowsing(\n", 1
+        )[1].split("\n    private func inspectActionPopup", 1)[0]
+        load_and_inspect = session.split(
+            "    private func loadAndInspect(\n", 1
+        )[1].split("\n    private func inspectCrossHostCustomFilterIsolation", 1)[0]
+        custom_cosmetic_states = session.split(
+            "    private func customCosmeticFilterStates(\n", 1
+        )[1].split("\n    private func verifyFreshAllFramesReplayIsolation", 1)[0]
+        inspect_current_page = session.split(
+            "    private func inspectCurrentPage(\n", 1
+        )[1].split("\n    private func addDynamicAndSessionRules", 1)[0]
+        navigation_waiter = source.split(
+            "private final class FloorpUBOLNavigationWaiter: NSObject, "
+            "WKNavigationDelegate {\n",
+            1,
+        )[1].split(
+            "\n@MainActor\nprivate final class FloorpUBOLDiagnosticControllerDelegate",
+            1,
+        )[0]
+
+        self.assertIn(
+            "private static let privateCosmeticActivationTimeoutNanoseconds: UInt64 "
+            "= 30_000_000_000",
+            session,
+        )
+        self.assertIn(
+            "private static let privateRealmReadinessTimeoutNanoseconds: UInt64 "
+            "= 90_000_000_000",
+            session,
+        )
+        self.assertIn(
+            "customCosmeticSettleTimeoutNanoseconds: UInt64 = 15_000_000_000",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "customCosmeticSettleTimeoutNanoseconds:\n"
+            "                        Self.privateCosmeticActivationTimeoutNanoseconds",
+            private_browsing,
+        )
+        self.assertIn(
+            "navigationTimeoutPolicy: .preserveWebViewForProcessLifetime",
+            private_browsing,
+        )
+        self.assertIn("readinessDeadline: readinessDeadline", private_browsing)
+        self.assertIn(
+            "let localSettleDeadline = Self.makeReadinessDeadline(",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "let settleDeadline = readinessDeadline.map {\n"
+            "            min(localSettleDeadline, $0)",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "timeoutNanoseconds: try Self.boundedTimeout(\n"
+            "                    5_000_000_000,\n"
+            "                    until: readinessDeadline",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "_ = try Self.remainingReadinessTimeout(until: readinessDeadline)",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "guard sampleStartedAt < settleDeadline else { break }",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "guard sampleFinishedAt < settleDeadline else { break }",
+            load_and_inspect,
+        )
+        sample_order = (
+            "let states = try await customCosmeticFilterStates(",
+            "if let readinessDeadline {",
+            "let sampleFinishedAt = DispatchTime.now().uptimeNanoseconds",
+            "guard sampleFinishedAt < settleDeadline else { break }",
+            "lastStates = states",
+        )
+        sample_positions = [load_and_inspect.index(token) for token in sample_order]
+        self.assertEqual(sample_positions, sorted(sample_positions))
+        self.assertIn(
+            "timeoutNanoseconds: try Self.boundedTimeout(\n"
+            "                60_000_000_000,\n"
+            "                until: readinessDeadline",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "_ = try Self.remainingReadinessTimeout(until: readinessDeadline)",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "timeoutNanoseconds: UInt64 = 5_000_000_000",
+            custom_cosmetic_states,
+        )
+        self.assertIn(
+            "timeoutNanoseconds: timeoutNanoseconds",
+            custom_cosmetic_states,
+        )
+        self.assertIn(
+            "timeoutNanoseconds: UInt64 = 60_000_000_000",
+            inspect_current_page,
+        )
+        self.assertIn(
+            "timeoutNanoseconds: timeoutNanoseconds",
+            inspect_current_page,
+        )
+        self.assertEqual(private_browsing.count("previousActiveTab: nil"), 2)
+        private_markers = ("private-navigation", "private-complete")
+        marker_positions = [private_browsing.index(marker) for marker in private_markers]
+        self.assertEqual(marker_positions, sorted(marker_positions))
+        for marker in private_markers:
+            self.assertEqual(private_browsing.count(marker), 1)
+        private_tokens = (
+            "privateRealmReadinessTimeoutNanoseconds",
+            "controller.didFocusWindow(browser.privateWindow)",
+            "Self.loadBackgroundContent(",
+            "Self.waitUntilBackgroundIsReady(",
+            "0..<FloorpUBOLPrivateBrowsingRecovery.maximumAttemptCount",
+            "FloorpUBOLPrivateBrowsingRecovery.shouldRetry(",
+            "preserveRuntimeOnClose = true",
+            "FloorpNativeWebExtensionDeferredWebViewRelease.retain(privateWebView)",
+            "FloorpUBOLPrivateBrowsingRecovery.makeReplacementWebView(",
+            "browser.privateTab.replaceWebViewForRecovery(replacement)",
+            "retainedRuntimeObjects.append(replacement)",
+            "await Task.yield()",
+            "try await Task.sleep(nanoseconds: min(",
+        )
+        private_positions = [private_browsing.index(token) for token in private_tokens]
+        self.assertEqual(private_positions, sorted(private_positions))
+        retry_path = private_browsing.split("            } catch {\n", 1)[1]
+        self.assertNotIn("didOpenTab", retry_path)
+        self.assertNotIn("didOpenWindow", retry_path)
+        self.assertNotIn("didActivateTab", retry_path)
+
+        self.assertIn("static let maximumAttemptCount = 2", recovery)
+        self.assertIn("attempt == 0", recovery)
+        self.assertIn("!requiresProcessLifetimeRetention", recovery)
+        self.assertIn("!isTaskCancelled", recovery)
+        self.assertIn("hasRemainingBudget", recovery)
+        self.assertIn(
+            "FloorpNativeWebExtensionHost.isGesturesIdleDeinitTransition(error)",
+            recovery,
+        )
+        self.assertIn(
+            "configuration.websiteDataStore = failedWebView.configuration.websiteDataStore",
+            recovery,
+        )
+        self.assertIn("configuration.webExtensionController = controller", recovery)
+        self.assertNotIn("WKWebsiteDataStore.nonPersistent()", recovery)
+
+        self.assertIn("private var preserveRuntimeOnClose = false", session)
+        close_tokens = (
+            "if !preserveRuntimeOnClose {",
+            "retainedExtensionWebView?.floorpTearDownDiagnosticWebViewIfSafe()",
+            "controller.delegate = nil",
+            "objects.append(contentsOf: retainedRuntimeObjects)",
+            "FloorpWebExtensionTestRuntimeRetainer.retain(",
+        )
+        close_positions = [close.index(token) for token in close_tokens]
+        self.assertEqual(close_positions, sorted(close_positions))
+
+        run_tokens = (
+            "browser.open(using: controller)",
+            "var completedSuccessfully = false",
+            "if completedSuccessfully && !preserveRuntimeOnClose {",
+            "browser.close(using: controller)",
+            "preserveBrowserEnvironmentForProcessLifetime(browser)",
+            "let report = FloorpUBOLReleaseAcceptanceReport(",
+            "completedSuccessfully = true",
+            "return report",
+        )
+        run_positions = [run.index(token) for token in run_tokens]
+        self.assertEqual(run_positions, sorted(run_positions))
+        self.assertEqual(run.count("browser.close(using: controller)"), 1)
+        self.assertNotIn("defer { browser.close(using: controller) }", run)
+        self.assertIn("preserveRuntimeOnClose = true", preserve_browser)
+        for retained_object in (
+            "browser.normalWebView",
+            "browser.privateWebView",
+            "browser.normalTab",
+            "browser.privateTab",
+            "browser.normalWindow",
+            "browser.privateWindow",
+            "browser.hostController",
+            "browser.hostWindow",
+            "browser.delegate",
+        ):
+            self.assertEqual(preserve_browser.count(retained_object), 1)
+        self.assertIn(
+            "retainedRuntimeObjects.append(contentsOf: objects)",
+            preserve_browser,
+        )
+
+        self.assertIn("private weak var expectedWebView: WKWebView?", navigation_waiter)
+        self.assertIn("private var expectedNavigation: WKNavigation?", navigation_waiter)
+        self.assertIn("expectedWebView = webView", navigation_waiter)
+        self.assertIn(
+            "guard let navigation = webView.load(URLRequest(url: url)) else {",
+            navigation_waiter,
+        )
+        self.assertIn("expectedNavigation = navigation", navigation_waiter)
+        self.assertEqual(
+            navigation_waiter.count("navigation === expectedNavigation else { return }"),
+            3,
+        )
+        self.assertIn(
+            "guard webView === expectedWebView else { return }",
+            navigation_waiter,
+        )
+        self.assertIn("expectedWebView = nil", navigation_waiter)
+        self.assertIn("expectedNavigation = nil", navigation_waiter)
+
     def test_ubol_ruleset_acceptance_uses_the_shipping_foreground_transaction(self):
         source = (
             ROOT
@@ -333,7 +569,15 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "= 15_000_000_000",
             session,
         )
-        self.assertIn("let settleDeadline = Self.makeReadinessDeadline(", load_and_inspect)
+        self.assertIn(
+            "let localSettleDeadline = Self.makeReadinessDeadline(",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "let settleDeadline = readinessDeadline.map {\n"
+            "            min(localSettleDeadline, $0)",
+            load_and_inspect,
+        )
         self.assertIn("let requiredSamples = 8", load_and_inspect)
         self.assertIn("var observedUnexpectedState = false", load_and_inspect)
         self.assertIn(
@@ -351,7 +595,14 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "                   consecutiveExpectedSamples >= requiredSamples",
             load_and_inspect,
         )
-        self.assertIn("guard now < settleDeadline else { break }", load_and_inspect)
+        self.assertIn(
+            "guard sampleStartedAt < settleDeadline else { break }",
+            load_and_inspect,
+        )
+        self.assertIn(
+            "guard sampleFinishedAt < settleDeadline else { break }",
+            load_and_inspect,
+        )
         self.assertNotIn("for _ in 0..<20", load_and_inspect)
 
         self.assertIn("let coldDocumentStart: FloorpUBOLPageAcceptance", report)

@@ -494,6 +494,108 @@ final class FloorpUBOLWebKitDiagnosticsTests: XCTestCase {
         )
     }
 
+    // swiftlint:disable:next function_body_length
+    func testPrivateBrowsingGesturesRecoveryPolicyIsNarrowAndSingleUse() throws {
+        let gesturesDeinitTransition = NSError(
+            domain: "Gestures.GesturePhaseQueue<()>.InvalidTransition",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                InvalidTransition {
+                  phase: idle
+                  targetPhase: failed(deinit)
+                }
+                """
+            ]
+        )
+        func mayRetry(
+            _ error: any Error,
+            _ attempt: Int,
+            _ requiresRetention: Bool,
+            _ isCancelled: Bool,
+            _ hasBudget: Bool
+        ) -> Bool {
+            return FloorpUBOLPrivateBrowsingRecovery.shouldRetry(
+                after: error,
+                attempt: attempt,
+                requiresProcessLifetimeRetention: requiresRetention,
+                isTaskCancelled: isCancelled,
+                hasRemainingBudget: hasBudget
+            )
+        }
+
+        XCTAssertTrue(mayRetry(gesturesDeinitTransition, 0, false, false, true))
+        XCTAssertFalse(mayRetry(gesturesDeinitTransition, 1, false, false, true))
+        XCTAssertFalse(mayRetry(gesturesDeinitTransition, 0, true, false, true))
+        XCTAssertFalse(mayRetry(gesturesDeinitTransition, 0, false, true, true))
+        XCTAssertFalse(mayRetry(gesturesDeinitTransition, 0, false, false, false))
+        XCTAssertFalse(mayRetry(
+            NSError(
+                domain: gesturesDeinitTransition.domain,
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "InvalidTransition { phase: active targetPhase: failed(deinit) }"
+                ]
+            ),
+            0,
+            false,
+            false,
+            true
+        ))
+        XCTAssertFalse(mayRetry(
+            NSError(
+                domain: "Floorp.ExtensionJavaScript",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "InvalidTransition { phase: idle targetPhase: failed(deinit) }"
+                ]
+            ),
+            0,
+            false,
+            false,
+            true
+        ))
+    }
+
+    func testPrivateBrowsingRecoveryReplacesOnlyTheTabsBackingWebView() {
+        let dataStore = WKWebsiteDataStore.nonPersistent()
+        let controllerConfiguration = WKWebExtensionController.Configuration(identifier: UUID())
+        controllerConfiguration.defaultWebsiteDataStore = dataStore
+        let controller = WKWebExtensionController(configuration: controllerConfiguration)
+        let webViewConfiguration = WKWebViewConfiguration()
+        webViewConfiguration.websiteDataStore = dataStore
+        webViewConfiguration.webExtensionController = controller
+        let failedWebView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: webViewConfiguration
+        )
+        failedWebView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        let tab = FloorpUBOLDiagnosticTab(webView: failedWebView)
+        let window = FloorpUBOLDiagnosticWindow(tab: tab, isPrivateBrowsing: true)
+        tab.diagnosticWindow = window
+
+        let replacement = FloorpUBOLPrivateBrowsingRecovery.makeReplacementWebView(
+            replacing: failedWebView,
+            controller: controller
+        )
+        tab.replaceWebViewForRecovery(replacement)
+
+        XCTAssertFalse(replacement === failedWebView)
+        XCTAssertTrue(replacement.configuration.websiteDataStore === dataStore)
+        XCTAssertTrue(replacement.configuration.webExtensionController === controller)
+        XCTAssertFalse(
+            replacement.configuration.userContentController
+                === failedWebView.configuration.userContentController
+        )
+        XCTAssertTrue(tab.webView === replacement)
+        XCTAssertTrue(window.tab === tab)
+        XCTAssertTrue(tab.diagnosticWindow === window)
+        XCTAssertEqual(replacement.frame, failedWebView.frame)
+        XCTAssertEqual(replacement.autoresizingMask, failedWebView.autoresizingMask)
+    }
+
     func testOfficialUBOLWebKitDNRCompilerMatrixAndBisectsSingletonFailures() async throws {
         guard ProcessInfo.processInfo.environment[Self.optInEnvironmentKey] == "1" else {
             throw XCTSkip(
@@ -577,7 +679,6 @@ final class FloorpUBOLWebKitDiagnosticsTests: XCTestCase {
 @MainActor
 private struct FloorpUBOLReleaseBrowserEnvironment {
     let normalWebView: WKWebView
-    let privateWebView: WKWebView
     let normalTab: FloorpUBOLDiagnosticTab
     let privateTab: FloorpUBOLDiagnosticTab
     let normalWindow: FloorpUBOLDiagnosticWindow
@@ -585,6 +686,10 @@ private struct FloorpUBOLReleaseBrowserEnvironment {
     let hostController: UIViewController
     let hostWindow: UIWindow
     let delegate: FloorpUBOLDiagnosticControllerDelegate
+
+    var privateWebView: WKWebView {
+        privateTab.webView
+    }
 
     func open(using controller: WKWebExtensionController) {
         controller.delegate = delegate
@@ -609,6 +714,37 @@ private struct FloorpUBOLReleaseBrowserEnvironment {
 }
 
 @MainActor
+private enum FloorpUBOLPrivateBrowsingRecovery {
+    static let maximumAttemptCount = 2
+
+    static func shouldRetry(
+        after error: any Error,
+        attempt: Int,
+        requiresProcessLifetimeRetention: Bool,
+        isTaskCancelled: Bool,
+        hasRemainingBudget: Bool
+    ) -> Bool {
+        attempt == 0
+            && !requiresProcessLifetimeRetention
+            && !isTaskCancelled
+            && hasRemainingBudget
+            && FloorpNativeWebExtensionHost.isGesturesIdleDeinitTransition(error)
+    }
+
+    static func makeReplacementWebView(
+        replacing failedWebView: WKWebView,
+        controller: WKWebExtensionController
+    ) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = failedWebView.configuration.websiteDataStore
+        configuration.webExtensionController = controller
+        let replacement = WKWebView(frame: failedWebView.frame, configuration: configuration)
+        replacement.autoresizingMask = failedWebView.autoresizingMask
+        return replacement
+    }
+}
+
+@MainActor
 private final class FloorpUBOLReleaseAcceptanceSession {
     private static let defaultRulesets = ["ublock-filters", "easylist", "easyprivacy"]
     private static let japaneseRuleset = "jpn-1"
@@ -621,6 +757,11 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     private static let coldExtensionPageNavigationTimeoutNanoseconds: UInt64 = 30_000_000_000
     private static let warmExtensionPageNavigationTimeoutNanoseconds: UInt64 = 5_000_000_000
     private static let customCosmeticActivationTimeoutNanoseconds: UInt64 = 15_000_000_000
+    // Private browsing uses a nonpersistent data store. On a busy iOS 26
+    // simulator, uBO Lite can need more than the ordinary page budget to
+    // recreate its cosmetic-filter state in that separate realm.
+    private static let privateCosmeticActivationTimeoutNanoseconds: UInt64 = 30_000_000_000
+    private static let privateRealmReadinessTimeoutNanoseconds: UInt64 = 90_000_000_000
     private static let expectedDefaultRuleCount = 113_100
     private static let expectedJapaneseRuleCount = 1_906
     // Exercise a foreign dynamic rule in uBO Lite's preserved special-rule
@@ -636,6 +777,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     private var retainedExtensionWebView: WKWebView?
     private var extensionNavigationWaiter: FloorpUBOLNavigationWaiter?
     private var retainedRuntimeObjects = [AnyObject]()
+    private var preserveRuntimeOnClose = false
 
     private var extensionWebView: WKWebView {
         guard let retainedExtensionWebView else {
@@ -677,8 +819,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     }
 
     func close() {
-        retainedExtensionWebView?.floorpTearDownDiagnosticWebViewIfSafe()
-        controller.delegate = nil
+        if !preserveRuntimeOnClose {
+            retainedExtensionWebView?.floorpTearDownDiagnosticWebViewIfSafe()
+            controller.delegate = nil
+        }
         var objects: [AnyObject] = [webExtension, websiteDataStore]
         objects.append(contentsOf: retainedRuntimeObjects)
         if let retainedExtensionWebView {
@@ -698,6 +842,24 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         retainedRuntimeObjects.removeAll()
     }
 
+    private func preserveBrowserEnvironmentForProcessLifetime(
+        _ browser: FloorpUBOLReleaseBrowserEnvironment
+    ) {
+        preserveRuntimeOnClose = true
+        let objects: [AnyObject] = [
+            browser.normalWebView,
+            browser.privateWebView,
+            browser.normalTab,
+            browser.privateTab,
+            browser.normalWindow,
+            browser.privateWindow,
+            browser.hostController,
+            browser.hostWindow,
+            browser.delegate,
+        ]
+        retainedRuntimeObjects.append(contentsOf: objects)
+    }
+
     func run() async throws -> FloorpUBOLReleaseAcceptanceReport {
         print("FLOORP_UBOL_RELEASE_GATE server")
         let server = try Self.makeServer()
@@ -707,7 +869,18 @@ private final class FloorpUBOLReleaseAcceptanceSession {
 
         let browser = makeBrowserEnvironment()
         browser.open(using: controller)
-        defer { browser.close(using: controller) }
+        var completedSuccessfully = false
+        defer {
+            if completedSuccessfully && !preserveRuntimeOnClose {
+                browser.close(using: controller)
+            } else {
+                // A failed WebKit navigation or JavaScript probe can still have
+                // native lifecycle work queued after Swift has received the
+                // error. Retain the complete connected topology and leave its
+                // delegate/window relationships untouched until process exit.
+                preserveBrowserEnvironmentForProcessLifetime(browser)
+            }
+        }
         let normalWebView = browser.normalWebView
 
         print("FLOORP_UBOL_RELEASE_GATE optimal-config")
@@ -773,8 +946,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         let backgroundWake = try await verifyBackgroundWakePreservesState()
         print("FLOORP_UBOL_RELEASE_GATE report")
 
-        withExtendedLifetime(browser) {}
-        return FloorpUBOLReleaseAcceptanceReport(
+        let report = FloorpUBOLReleaseAcceptanceReport(
             schemaVersion: 1,
             operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
             webKitBundleVersion: Bundle(for: WKWebView.self)
@@ -808,6 +980,9 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             backgroundWake: backgroundWake,
             contextErrors: context.errors.map(FloorpUBOLDNRErrorRecord.init)
         )
+        completedSuccessfully = true
+        withExtendedLifetime(browser) {}
+        return report
     }
 
     private func prepareInitialExtensionPage() async throws {
@@ -854,18 +1029,81 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         _ pageURL: URL,
         in browser: FloorpUBOLReleaseBrowserEnvironment
     ) async throws -> FloorpUBOLPageAcceptance {
+        let readinessDeadline = Self.makeReadinessDeadline(
+            timeoutNanoseconds: Self.privateRealmReadinessTimeoutNanoseconds
+        )
         browser.normalWebView.isHidden = true
         browser.privateWebView.isHidden = false
         browser.delegate.focusedWindow = browser.privateWindow
         controller.didFocusWindow(browser.privateWindow)
         controller.didActivateTab(browser.privateTab, previousActiveTab: nil)
-        let result = try await loadAndInspect(pageURL, in: browser.privateWebView)
-        browser.privateWebView.isHidden = true
-        browser.normalWebView.isHidden = false
-        browser.delegate.focusedWindow = browser.normalWindow
-        controller.didFocusWindow(browser.normalWindow)
-        controller.didActivateTab(browser.normalTab, previousActiveTab: nil)
-        return result
+        print("FLOORP_UBOL_RELEASE_GATE private-readiness")
+        try await Self.loadBackgroundContent(
+            in: context,
+            timeoutNanoseconds: try Self.remainingReadinessTimeout(until: readinessDeadline)
+        )
+        try await Self.waitUntilBackgroundIsReady(
+            in: extensionWebView,
+            timeoutNanoseconds: try Self.remainingReadinessTimeout(until: readinessDeadline)
+        )
+        print("FLOORP_UBOL_RELEASE_GATE private-readiness-complete")
+
+        for attempt in 0..<FloorpUBOLPrivateBrowsingRecovery.maximumAttemptCount {
+            let privateWebView = browser.privateWebView
+            do {
+                print("FLOORP_UBOL_RELEASE_GATE private-navigation attempt=\(attempt + 1)")
+                let result = try await loadAndInspect(
+                    pageURL,
+                    in: privateWebView,
+                    customCosmeticSettleTimeoutNanoseconds:
+                        Self.privateCosmeticActivationTimeoutNanoseconds,
+                    navigationTimeoutPolicy: .preserveWebViewForProcessLifetime,
+                    readinessDeadline: readinessDeadline
+                )
+                print("FLOORP_UBOL_RELEASE_GATE private-complete")
+                privateWebView.isHidden = true
+                browser.normalWebView.isHidden = false
+                browser.delegate.focusedWindow = browser.normalWindow
+                controller.didFocusWindow(browser.normalWindow)
+                controller.didActivateTab(browser.normalTab, previousActiveTab: nil)
+                return result
+            } catch {
+                let requiresRetention = FloorpNativeWebExtensionProcessLifetimeWebViewRegistry
+                    .mustPreserve(privateWebView)
+                let hasRemainingBudget = (try? Self.remainingReadinessTimeout(
+                    until: readinessDeadline
+                )) != nil
+                guard FloorpUBOLPrivateBrowsingRecovery.shouldRetry(
+                    after: error,
+                    attempt: attempt,
+                    requiresProcessLifetimeRetention: requiresRetention,
+                    isTaskCancelled: Task.isCancelled,
+                    hasRemainingBudget: hasRemainingBudget
+                ) else {
+                    throw error
+                }
+
+                preserveRuntimeOnClose = true
+                FloorpNativeWebExtensionDeferredWebViewRelease.retain(privateWebView)
+                let replacement = FloorpUBOLPrivateBrowsingRecovery.makeReplacementWebView(
+                    replacing: privateWebView,
+                    controller: controller
+                )
+                privateWebView.isHidden = true
+                replacement.isHidden = false
+                browser.hostController.view.addSubview(replacement)
+                browser.privateTab.replaceWebViewForRecovery(replacement)
+                retainedRuntimeObjects.append(replacement)
+                print("FLOORP_UBOL_RELEASE_GATE private-retry")
+                await Task.yield()
+                await Task.yield()
+                try await Task.sleep(nanoseconds: min(
+                    100_000_000,
+                    try Self.remainingReadinessTimeout(until: readinessDeadline)
+                ))
+            }
+        }
+        preconditionFailure("The private browsing recovery loop exhausted without returning")
     }
 
     private func inspectActionPopup(
@@ -1139,7 +1377,6 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         ]
         return FloorpUBOLReleaseBrowserEnvironment(
             normalWebView: normalWebView,
-            privateWebView: privateWebView,
             normalTab: normalTab,
             privateTab: privateTab,
             normalWindow: normalWindow,
@@ -1331,7 +1568,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         in webView: WKWebView,
         expectedCustomCosmeticFilters: Bool = true,
         customCosmeticSettleTimeoutNanoseconds: UInt64 = 15_000_000_000,
-        navigationTimeoutPolicy: FloorpUBOLNavigationTimeoutPolicy = .stopLoading
+        navigationTimeoutPolicy: FloorpUBOLNavigationTimeoutPolicy = .stopLoading,
+        readinessDeadline: UInt64? = nil
     ) async throws
         -> FloorpUBOLPageAcceptance {
         let waiter = FloorpUBOLNavigationWaiter()
@@ -1339,6 +1577,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             try await waiter.load(
                 url,
                 in: webView,
+                timeoutNanoseconds: try Self.boundedTimeout(
+                    30_000_000_000,
+                    until: readinessDeadline
+                ),
                 timeoutPolicy: navigationTimeoutPolicy
             )
         } catch {
@@ -1359,11 +1601,27 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             crossOriginCustom: false,
             originFallbackDiagnostic: "not sampled"
         )
-        let settleDeadline = Self.makeReadinessDeadline(
+        let localSettleDeadline = Self.makeReadinessDeadline(
             timeoutNanoseconds: customCosmeticSettleTimeoutNanoseconds
         )
+        let settleDeadline = readinessDeadline.map {
+            min(localSettleDeadline, $0)
+        } ?? localSettleDeadline
         while true {
-            let states = try await customCosmeticFilterStates(in: webView)
+            let sampleStartedAt = DispatchTime.now().uptimeNanoseconds
+            guard sampleStartedAt < settleDeadline else { break }
+            let states = try await customCosmeticFilterStates(
+                in: webView,
+                timeoutNanoseconds: try Self.boundedTimeout(
+                    5_000_000_000,
+                    until: readinessDeadline
+                )
+            )
+            if let readinessDeadline {
+                _ = try Self.remainingReadinessTimeout(until: readinessDeadline)
+            }
+            let sampleFinishedAt = DispatchTime.now().uptimeNanoseconds
+            guard sampleFinishedAt < settleDeadline else { break }
             lastStates = states
             if states.custom == expectedCustomCosmeticFilters,
                states.procedural == expectedCustomCosmeticFilters,
@@ -1383,10 +1641,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                     break
                 }
             }
-            let now = DispatchTime.now().uptimeNanoseconds
-            guard now < settleDeadline else { break }
             try await Task.sleep(
-                nanoseconds: min(250_000_000, settleDeadline - now)
+                nanoseconds: min(250_000_000, settleDeadline - sampleFinishedAt)
             )
         }
         let reachedStableExpectedState = expectedCustomCosmeticFilters
@@ -1405,7 +1661,17 @@ private final class FloorpUBOLReleaseAcceptanceSession {
                     + "\(requiredSamples) samples"
             )
         }
-        return try await inspectCurrentPage(in: webView)
+        let result = try await inspectCurrentPage(
+            in: webView,
+            timeoutNanoseconds: try Self.boundedTimeout(
+                60_000_000_000,
+                until: readinessDeadline
+            )
+        )
+        if let readinessDeadline {
+            _ = try Self.remainingReadinessTimeout(until: readinessDeadline)
+        }
+        return result
     }
 
     private func inspectCrossHostCustomFilterIsolation(
@@ -1428,7 +1694,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
     }
 
     private func customCosmeticFilterStates(
-        in webView: WKWebView
+        in webView: WKWebView,
+        timeoutNanoseconds: UInt64 = 5_000_000_000
     ) async throws -> FloorpUBOLCustomCosmeticFilterStates {
         let raw = try await webView.floorpCallAsyncJavaScript(
             """
@@ -1509,7 +1776,7 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             """,
             arguments: [:],
             contentWorld: .page,
-            timeoutNanoseconds: 5_000_000_000
+            timeoutNanoseconds: timeoutNanoseconds
         )
         guard let values = raw as? [String: Any],
               let custom = values["custom"] as? Bool,
@@ -1704,7 +1971,10 @@ private final class FloorpUBOLReleaseAcceptanceSession {
         )
     }
 
-    private func inspectCurrentPage(in webView: WKWebView) async throws
+    private func inspectCurrentPage(
+        in webView: WKWebView,
+        timeoutNanoseconds: UInt64 = 60_000_000_000
+    ) async throws
         -> FloorpUBOLPageAcceptance {
         let raw = try await webView.floorpCallAsyncJavaScript(
             """
@@ -1776,7 +2046,8 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             };
             """,
             arguments: [:],
-            contentWorld: .page
+            contentWorld: .page,
+            timeoutNanoseconds: timeoutNanoseconds
         )
         guard let result = raw as? [String: Any] else {
             throw FloorpUBOLDNRDiagnosticError.invalidJavaScriptResult(
@@ -2169,6 +2440,17 @@ private final class FloorpUBOLReleaseAcceptanceSession {
             throw FloorpUBOLDNRDiagnosticError.javaScriptTimedOut
         }
         return deadline - now
+    }
+
+    private static func boundedTimeout(
+        _ timeoutNanoseconds: UInt64,
+        until deadline: UInt64?
+    ) throws -> UInt64 {
+        guard let deadline else { return timeoutNanoseconds }
+        return min(
+            timeoutNanoseconds,
+            try remainingReadinessTimeout(until: deadline)
+        )
     }
 
     nonisolated private static func makeServer() throws -> GCDWebServer {
@@ -3301,6 +3583,7 @@ private enum FloorpUBOLDNRDiagnosticError: LocalizedError {
     case extensionContextDidNotUnload
     case invalidJavaScriptResult(String)
     case javaScriptTimedOut
+    case navigationDidNotStart(URL)
     case navigationTimedOut(URL)
     case webContentProcessTerminated
     case dynamicRuleLimitExceeded(Int)
@@ -3319,6 +3602,8 @@ private enum FloorpUBOLDNRDiagnosticError: LocalizedError {
             return "The WebExtension diagnostic API returned an invalid value: \(description)"
         case .javaScriptTimedOut:
             return "A WebExtension JavaScript operation timed out."
+        case .navigationDidNotStart(let url):
+            return "The WebExtension diagnostic navigation did not start: \(url.absoluteString)"
         case .navigationTimedOut(let url):
             return "The WebExtension diagnostic navigation timed out: \(url.absoluteString)"
         case .webContentProcessTerminated:
@@ -3465,6 +3750,8 @@ private enum FloorpUBOLNavigationTimeoutPolicy {
 private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<Void, any Error>?
     private var loadToken: UUID?
+    private weak var expectedWebView: WKWebView?
+    private var expectedNavigation: WKNavigation?
 
     func load(
         _ url: URL,
@@ -3475,9 +3762,14 @@ private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
         webView.navigationDelegate = self
         let token = UUID()
         loadToken = token
+        expectedWebView = webView
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
-            webView.load(URLRequest(url: url))
+            guard let navigation = webView.load(URLRequest(url: url)) else {
+                self.complete(.failure(FloorpUBOLDNRDiagnosticError.navigationDidNotStart(url)))
+                return
+            }
+            expectedNavigation = navigation
             Task { @MainActor [weak self, weak webView] in
                 try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 guard let self, self.loadToken == token else { return }
@@ -3498,6 +3790,9 @@ private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        guard webView === expectedWebView,
+              let navigation,
+              navigation === expectedNavigation else { return }
         complete(.success(()))
     }
 
@@ -3506,6 +3801,9 @@ private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
         didFail navigation: WKNavigation?,
         withError error: any Error
     ) {
+        guard webView === expectedWebView,
+              let navigation,
+              navigation === expectedNavigation else { return }
         complete(.failure(error))
     }
 
@@ -3514,10 +3812,14 @@ private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation?,
         withError error: any Error
     ) {
+        guard webView === expectedWebView,
+              let navigation,
+              navigation === expectedNavigation else { return }
         complete(.failure(error))
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === expectedWebView else { return }
         complete(.failure(FloorpUBOLDNRDiagnosticError.webContentProcessTerminated))
     }
 
@@ -3525,6 +3827,8 @@ private final class FloorpUBOLNavigationWaiter: NSObject, WKNavigationDelegate {
         guard let continuation else { return }
         self.continuation = nil
         loadToken = nil
+        expectedWebView = nil
+        expectedNavigation = nil
         continuation.resume(with: result)
     }
 }
@@ -3647,11 +3951,15 @@ private final class FloorpUBOLDiagnosticWindow: NSObject, WKWebExtensionWindow {
 
 @MainActor
 private final class FloorpUBOLDiagnosticTab: NSObject, WKWebExtensionTab {
-    let webView: WKWebView
+    private(set) var webView: WKWebView
     weak var diagnosticWindow: FloorpUBOLDiagnosticWindow?
 
     init(webView: WKWebView) {
         self.webView = webView
+    }
+
+    func replaceWebViewForRecovery(_ replacement: WKWebView) {
+        webView = replacement
     }
 
     func window(for context: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
