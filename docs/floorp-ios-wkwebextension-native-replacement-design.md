@@ -42,7 +42,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359`、
+派生 SHA-256 は `373893d34822aa687b50f3e7273d1612a8e4af2477942b4c7660fa5d594b571b`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -187,22 +187,21 @@ XCTest case 実測 164.060秒、278.192秒、252.510秒で全回合格（failed 
 既知の upstream WebKit 制約として検出し、通常の遮断機能とは別に扱う。
 
 2026-09-11 に、現行派生 ZIP
-`53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359` を iPhone 16 Pro / iOS 26.0
-（23A343）Simulator / WebKit bundle `8622.1.22.10.9` で検証した。document-start の selector
-取得が期限を消費した後に document-idle／dynamic 実行が同じ期限を待つ競合、自己 execution
-handoff、および通常 HTTP(S) document で background selector transport が失敗する経路を決定的な
-Node 回帰試験で再現・修正した後、別々の消去済み Simulator で
-`testOfficialUBOLReleaseAcceptanceGates` を198.149秒／230.776秒の2回、0失敗で合格させた。この run は
-main／srcdoc の plain・form-control・procedural cosmetic、cross-origin 非漏洩、root 交換後の復旧、
-cross-host 往復、popup、dynamic／session DNR、日本語 ruleset、private browsing、35秒 idle 後の最初の
-document-start を含む。製品 host の uBOL blocking／dashboard は247.280秒、Dark Reader の公式
-theme／Page Action popup は53.672秒、製品 host の通常／private theme は2.309秒、製品 host の
-Page Action popup は3.748秒、2拡張選択メニューからの Dark Reader 表示は74.134秒で合格し、
-該当4結果バンドルの `GesturePhaseQueue InvalidTransition` は0件だった。iOS 18.4 で uBOL が
-unavailable のままになる条件は OS matrix CI の release gate として別途実行する。
+`373893d34822aa687b50f3e7273d1612a8e4af2477942b4c7660fa5d594b571b` を iPhone 16 Pro / iOS 26.0
+（23A343）Simulator / WebKit bundle `8622.1.22.10.9` で検証した。private tab reload 後の
+document-idle で、保持済み CSS API と直後の css-user が同じ document identity lease を並行更新し、
+main document の identity が suspended のまま残り得る競合を決定的な Node 回帰試験で再現した。
+旧 ZIP `53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359` が失敗し、現行 ZIP が
+合格することを確認した後、同じ新規 build 製品で `testOfficialUBOLReleaseAcceptanceGates` を
+3回連続実行し、XCTest case 実測160.132秒、156.476秒、156.260秒で全回合格
+（failed / skipped とも0）させた。この run は main／srcdoc の plain・form-control・procedural
+cosmetic、cross-origin 非漏洩、root 交換後の復旧、cross-host 往復、popup、dynamic／session DNR、
+日本語 ruleset、private browsing、35秒 idle 後の最初の document-start を含む。iOS 18.4 で
+uBOL が unavailable のままになる条件は OS matrix CI の release gate として別途実行する。
 
 `0b39067e4db2c1435230fb65a8a6a967435de0ab3d56171a9f9494a9fcd1e8b1` は document-scoped
-CSS の最終 WebKit 修正より前の TestFlight package として移行専用 allowlist に残す。新規 install と
+CSS の最終 WebKit 修正より前の TestFlight package、`53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359`
+は今回の修正直前に Floorp が生成した package として移行専用 allowlist に残す。新規 install と
 release acceptance は上記の現行派生 SHA-256 だけを受け入れる。
 
 補助的な過去回帰証拠として、2026-09-08 の iPhone 17 / iOS 26.2 Simulator build では
@@ -212,8 +211,8 @@ Dark Reader の `testOfficialDarkReaderAppliesThemeAndRendersInteractivePopup` �
 Cmd / Shift-Cmd / Option link、`targetFrame == nil` の新規 window、強制 download の
 per-WebView 分離、別 navigation の割り込み、失敗・完了・process 終了・WebView 削除時の
 cleanup を含む `BrowserViewControllerWebViewDelegateTests` も44件すべて合格した
-（XCTest 実行 16.185秒、failed / skipped とも0）。現行 release candidate の Dark Reader
-実績は上記2026-09-11の結果だけを採用する。
+（XCTest 実行 16.185秒、failed / skipped とも0）。Dark Reader の package と実行コードは今回の
+uBOL 修正では変更していないが、最終 release candidate では main の OS matrix CI を再度必須とする。
 
 リリース前に残る外部ゲートは実機回帰と App Review である。GPL は Floorp の公開ソースと
 審査メモへの明示を条件とし、技術的不合格には扱わない。
