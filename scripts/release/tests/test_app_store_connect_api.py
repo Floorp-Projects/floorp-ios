@@ -1023,6 +1023,176 @@ class ClientBehaviorTests(unittest.TestCase):
             self.assertTrue((root / "archive.sha256").is_file())
             self.assertTrue((root / "archive.metadata.json").is_file())
 
+    def _export_artifact_responses(self, artifacts):
+        return {
+            "/v1/ciBuildRuns/run-1/actions?limit=200": {
+                "data": [{
+                    "id": "action-1",
+                    "type": "ciBuildActions",
+                    "attributes": {
+                        "name": "Archive",
+                        "actionType": "ARCHIVE",
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCEEDED",
+                    },
+                }]
+            },
+            "/v1/ciBuildActions/action-1?include=buildRun": {
+                "data": {
+                    "id": "action-1",
+                    "type": "ciBuildActions",
+                    "attributes": {
+                        "name": "Archive",
+                        "actionType": "ARCHIVE",
+                        "executionProgress": "COMPLETE",
+                        "completionStatus": "SUCCEEDED",
+                    },
+                    "relationships": {
+                        "buildRun": {"data": {"type": "ciBuildRuns", "id": "run-1"}}
+                    },
+                }
+            },
+            "/v1/ciBuildActions/action-1/artifacts?limit=200": {"data": artifacts},
+        }
+
+    def test_download_ci_artifact_selects_export_by_file_name_suffix(self):
+        payload = b"app-store-ipa"
+        responses = self._export_artifact_responses([
+            {
+                "id": "dev",
+                "type": "ciArtifacts",
+                "attributes": {
+                    "fileType": "ARCHIVE_EXPORT",
+                    "fileName": "Floorp 0.3.0 development.zip",
+                    "fileSize": 11,
+                    "downloadUrl": "https://artifacts.example/development",
+                },
+            },
+            {
+                "id": "store",
+                "type": "ciArtifacts",
+                "attributes": {
+                    "fileType": "ARCHIVE_EXPORT",
+                    "fileName": "Floorp 0.3.0 app-store.zip",
+                    "fileSize": len(payload),
+                    "downloadUrl": "https://artifacts.example/app-store",
+                },
+            },
+        ])
+
+        def client(method, path, dry_run=False):
+            return responses[path]
+
+        original_urlopen = asc.urllib.request.urlopen
+
+        class FakeResponse:
+            def __init__(self):
+                self.remaining = payload
+                self.headers = {"Content-Length": str(len(payload))}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def geturl(self):
+                return "https://artifacts.example/app-store"
+
+            def read(self, size=-1):
+                value, self.remaining = self.remaining, b""
+                return value
+
+        asc.urllib.request.urlopen = lambda request, timeout=300: FakeResponse()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "export.zip"
+                sha = Path(tmp) / "export.zip.sha256"
+                metadata = Path(tmp) / "export.metadata.json"
+                asc.download_ci_artifact(
+                    client,
+                    "run-1",
+                    "ARCHIVE_EXPORT",
+                    out,
+                    sha,
+                    dry_run=False,
+                    metadata_output=metadata,
+                    expected_file_name_suffix="app-store.zip",
+                )
+                self.assertEqual(out.read_bytes(), payload)
+                recorded = json.loads(metadata.read_text())
+                self.assertEqual(recorded["artifact"]["id"], "store")
+        finally:
+            asc.urllib.request.urlopen = original_urlopen
+
+    def test_download_ci_artifact_rejects_ambiguous_export_suffix(self):
+        responses = self._export_artifact_responses([
+            {
+                "id": "store-a",
+                "type": "ciArtifacts",
+                "attributes": {
+                    "fileType": "ARCHIVE_EXPORT",
+                    "fileName": "Floorp 0.3.0 app-store.zip",
+                    "fileSize": 1,
+                    "downloadUrl": "https://artifacts.example/a",
+                },
+            },
+            {
+                "id": "store-b",
+                "type": "ciArtifacts",
+                "attributes": {
+                    "fileType": "ARCHIVE_EXPORT",
+                    "fileName": "Floorp 0.3.0 app-store.zip",
+                    "fileSize": 1,
+                    "downloadUrl": "https://artifacts.example/b",
+                },
+            },
+        ])
+
+        def client(method, path, dry_run=False):
+            return responses[path]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(asc.AllowlistError):
+                asc.download_ci_artifact(
+                    client,
+                    "run-1",
+                    "ARCHIVE_EXPORT",
+                    Path(tmp) / "export.zip",
+                    Path(tmp) / "export.zip.sha256",
+                    dry_run=False,
+                    expected_file_name_suffix="app-store.zip",
+                )
+
+    def test_download_ci_artifact_rejects_missing_export_suffix(self):
+        responses = self._export_artifact_responses([
+            {
+                "id": "dev",
+                "type": "ciArtifacts",
+                "attributes": {
+                    "fileType": "ARCHIVE_EXPORT",
+                    "fileName": "Floorp 0.3.0 development.zip",
+                    "fileSize": 1,
+                    "downloadUrl": "https://artifacts.example/development",
+                },
+            },
+        ])
+
+        def client(method, path, dry_run=False):
+            return responses[path]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(asc.AllowlistError):
+                asc.download_ci_artifact(
+                    client,
+                    "run-1",
+                    "ARCHIVE_EXPORT",
+                    Path(tmp) / "export.zip",
+                    Path(tmp) / "export.zip.sha256",
+                    dry_run=False,
+                    expected_file_name_suffix="app-store.zip",
+                )
+
 
 class CryptoTests(unittest.TestCase):
     def test_der_to_raw_signature_padding(self):
