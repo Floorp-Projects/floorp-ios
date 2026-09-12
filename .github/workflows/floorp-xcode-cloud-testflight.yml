@@ -223,6 +223,7 @@ jobs:
           python3 scripts/release/app-store-connect-api.py download-ci-artifact \
             --run-id "$FLOORP_XCODE_CLOUD_RUN_ID" \
             --relationship ARCHIVE_EXPORT \
+            --file-name-suffix "app-store.zip" \
             --output "$download_root/archive-export.download" \
             --sha256-output "$download_root/archive-export.sha256" \
             --metadata-output "$download_root/archive-export.metadata.json"

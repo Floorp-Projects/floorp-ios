@@ -757,11 +757,16 @@ def download_ci_artifact(
     dry_run: bool,
     metadata_output: Optional[Path] = None,
     max_bytes: int = MAX_CI_ARTIFACT_BYTES,
+    expected_file_name_suffix: Optional[str] = None,
 ) -> None:
     """Download one exact artifact from one successful archive action.
 
     The authenticated run-to-action, action-to-run, and action-to-artifact
     relationships are all checked before following Apple's short-lived URL.
+    A single Xcode Cloud archive can publish more than one export (for example
+    an App Store Connect export beside a development export), so callers may
+    disambiguate with an exact file-name suffix; exactly one artifact must
+    still match, otherwise the download fails closed.
     """
 
     if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
@@ -775,6 +780,19 @@ def download_ci_artifact(
     wanted = aliases.get(relationship.lower())
     if wanted is None:
         raise AllowlistError("CI artifact file type must be ARCHIVE or ARCHIVE_EXPORT")
+    if expected_file_name_suffix is not None:
+        if (
+            not isinstance(expected_file_name_suffix, str)
+            or not expected_file_name_suffix
+            or "/" in expected_file_name_suffix
+            or "\\" in expected_file_name_suffix
+            or expected_file_name_suffix in {".", ".."}
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in expected_file_name_suffix
+            )
+        ):
+            raise AllowlistError("expected artifact file-name suffix is invalid")
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
         raise AllowlistError("maximum artifact size must be a positive integer")
 
@@ -856,15 +874,27 @@ def download_ci_artifact(
         if isinstance(item.get("attributes"), dict)
         and item["attributes"].get("fileType") == wanted
     ]
+    selector = f"fileType {wanted}"
+    if expected_file_name_suffix is not None:
+        selector = f"{selector} and fileName suffix {expected_file_name_suffix!r}"
+        matches = [
+            item
+            for item in matches
+            if isinstance(item["attributes"].get("fileName"), str)
+            and item["attributes"]["fileName"].endswith(expected_file_name_suffix)
+        ]
     if len(matches) != 1:
         found = [
-            item.get("attributes", {}).get("fileType")
+            (
+                item.get("attributes", {}).get("fileType"),
+                item.get("attributes", {}).get("fileName"),
+            )
             for item in artifacts
             if isinstance(item.get("attributes"), dict)
         ]
         raise AllowlistError(
-            f"expected exactly one artifact with fileType {wanted} on run {run_id}; "
-            f"found {len(matches)} (all file types: {found})"
+            f"expected exactly one artifact with {selector} on run {run_id}; "
+            f"found {len(matches)} (all artifacts: {found})"
         )
     match = matches[0]
     attributes = match["attributes"]
@@ -1015,6 +1045,11 @@ def main(argv=None) -> int:
     download_parser.add_argument("--dry-run", action="store_true")
     download_parser.add_argument("--run-id", required=True)
     download_parser.add_argument("--relationship", required=True)
+    download_parser.add_argument(
+        "--file-name-suffix",
+        default=None,
+        help="Require exactly one matching artifact whose fileName ends with this suffix.",
+    )
     download_parser.add_argument("--output", required=True, type=Path)
     download_parser.add_argument("--sha256-output", required=True, type=Path)
     download_parser.add_argument("--metadata-output", type=Path)
@@ -1100,6 +1135,7 @@ def main(argv=None) -> int:
                 arguments.dry_run,
                 metadata_output=arguments.metadata_output,
                 max_bytes=arguments.max_bytes,
+                expected_file_name_suffix=arguments.file_name_suffix,
             )
             return 0
     except (AllowlistError, CredentialError, json.JSONDecodeError, ValueError) as error:
