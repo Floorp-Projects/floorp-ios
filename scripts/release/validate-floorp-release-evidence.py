@@ -1443,10 +1443,11 @@ def validate_release_evidence(
         evidence["marketing_version"] == archive_info["marketing_version"],
         "marketing version differs from archive Info.plist",
     )
-    check(
-        evidence["build_number"] == archive_info["build_number"],
-        "build number differs from archive Info.plist",
-    )
+    if artifact_kind != "cloud-archive":
+        check(
+            evidence["build_number"] == archive_info["build_number"],
+            "build number differs from archive Info.plist",
+        )
     check(
         evidence["bundle_id"] == archive_info["bundle_id"],
         "bundle ID differs from archive Info.plist",
@@ -1481,10 +1482,19 @@ def validate_release_evidence(
             ipa_info["marketing_version"] == archive_info["marketing_version"],
             "mixed build IDs: IPA marketing version differs from archive",
         )
-        check(
-            ipa_info["build_number"] == archive_info["build_number"],
-            "mixed build IDs: IPA build number differs from archive",
-        )
+        if artifact_kind == "cloud-archive":
+            # Xcode Cloud renumbers CFBundleVersion during the distribution
+            # export, so the exported IPA is authoritative for the release
+            # build number while the archive keeps its pre-export value.
+            check(
+                evidence["build_number"] == ipa_info["build_number"],
+                "build number differs from the exported IPA",
+            )
+        else:
+            check(
+                ipa_info["build_number"] == archive_info["build_number"],
+                "mixed build IDs: IPA build number differs from archive",
+            )
 
     dsyms = evidence["dsym_inventory"]
     check(bool(dsyms), "dSYM inventory is empty")
