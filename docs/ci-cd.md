@@ -210,9 +210,9 @@ Adding Push later requires restoring that target where needed, production entitl
 
 ### Managed browser entitlements
 
-Apple has assigned `com.apple.developer.web-browser` to `app.floorp.Floorp`. `FloorpReleaseApplication.entitlements` declares it as `true`, allowing eligible signed builds to appear in iOS’s Default Browser App settings. `FloorpReleaseInfo.plist` already registers the required `http` and `https` URL schemes.
+Apple has assigned `com.apple.developer.web-browser` to `app.floorp.Floorp`. `FloorpReleaseApplication.entitlements` declares it as `true`, allowing eligible signed builds to appear in iOS’s Default Browser App settings. `FloorpReleaseInfo.plist` already registers the required `http` and `https` URL schemes. The approved capability must also be enabled on the exact registered App ID: immediately before dispatch, the release bridge resolves the exact iOS bundle ID and refuses `POST /v1/ciBuildRuns` unless its live capability list contains exactly one `DEFAULT_WEB_BROWSER` entry.
 
-The capability is managed. Before producing a distribution archive, let Xcode refresh the automatically managed provisioning profile for Team `DV2U35YBHT`, then verify the signed archive contains `com.apple.developer.web-browser = true`.
+The capability is managed. Xcode-managed development and distribution profiles do not appear in the Developer account, so a visible pre-existing profile is not an authoritative preflight requirement. Once the App ID capability is enabled, the next Xcode Cloud run sees the latest configuration and automatically includes the additional entitlement in a new profile. Verify the resulting signed archive contains `com.apple.developer.web-browser = true`.
 
 The Floorp release entitlement continues to omit `com.apple.developer.browser.app-installation`, which is for installing alternative-distribution apps from a website. Add it only if Floorp deliberately adopts that distribution path and Apple approves the request.
 
@@ -304,7 +304,7 @@ The shared `Floorp` scheme now archives with `FloorpRelease` in Xcode Cloud. The
 1. In Signing & Capabilities, explicitly confirm the main `app.floorp.Floorp` bundle ID once before initial setup because the project derives it from an `.xcconfig` file. Register extension IDs only when those targets return to the release.
 2. Connect `Floorp-Projects/Floorp-iOS` to Xcode Cloud from Xcode's Report navigator. A GitHub organization owner must authorize the first connection.
 3. Keep `Floorp TestFlight Manual` manually started in Xcode Cloud, but start public-release candidates only through the GitHub Actions bridge. A direct App Store Connect start does not produce the source-bound release receipt and is not eligible for submission. Release builds use a protected immutable `floorp-catalog-<40-character merged SHA>` lightweight tag whose ref points directly at the exact reviewed `main` commit; annotated tags are rejected by the source-identity gate. Never delete or retarget a candidate tag after creating it, including when its build fails. Xcode Cloud supplies the tag/ref/commit values embedded by the pre-build script; the bridge and retained receipt remain responsible for resolving the live App Store Connect tag reference and proving that it points to that commit. A local `refs/tags/*` ref is not assumed in Xcode Cloud's detached checkout.
-4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml`. It verifies the immutable tag and exact-source CI acceptance, validates the workflow repository and product against App Store Connect app `6796708699` / bundle `app.floorp.Floorp`, snapshots the current maximum build number, and starts the tagged run through `POST /v1/ciBuildRuns`.
+4. Use `.github/workflows/floorp-xcode-cloud-testflight.yml`. It verifies the immutable tag and exact-source CI acceptance, validates the workflow repository and product against App Store Connect app `6796708699` / bundle `app.floorp.Floorp`, snapshots the current maximum build number, then re-resolves the exact registered iOS bundle ID and its sparse capability list. A missing or ambiguous `DEFAULT_WEB_BROWSER` capability blocks the bridge before it starts the tagged run through `POST /v1/ciBuildRuns`.
 5. The bridge always waits for `COMPLETE` / `SUCCEEDED`, rechecks the exact source commit and workflow, and requires exactly one nonpaginated run-to-build linkage. The linked build must be a new, larger build number for Floorp `0.3.0` on iOS, `VALID`, `APP_STORE_ELIGIBLE`, unexpired, non-exempt-encryption false, and minimum OS `18.4`.
 6. The bridge downloads the unique `ARCHIVE` and `ARCHIVE_EXPORT` resources from the same successful archive action through the authenticated App Store Connect API. It verifies the recorded resource IDs, types, sizes, and SHA-256 values, safely materializes the `.xcarchive` and `.ipa`, and emits `floorp-xcode-cloud-artifact-manifest.json`. Retain that manifest together with `floorp-xcode-cloud-build-receipt.json`. The workflow also materializes a notes-only App Review payload from the receipt using the full 40-character commit URL rather than the tag name; it rejects placeholders, a missing immutable public source URL or GPL disclosure, and content over 4,000 bytes.
 7. Before any external-beta write, `submit-floorp-external-beta.sh` snapshots the receipt once, then re-reads the run, run-to-build linkage, build, and group. It uses that same private receipt snapshot for both reviewed-note generation and source/build validation, and requires the supplied notes-only payload to match it exactly. The selected group must be external and belong to the same app. Contact fields must be complete; demo credentials are required only when App Store Connect reports `demoAccountRequired=true`. The client never creates groups or writes contact/demo credentials.
@@ -430,8 +430,10 @@ scripts/release/validate-floorp-release-evidence.py \
 ```
 
 `scripts/release/app-store-connect-api.py` is the only App Store Connect
-surface. Its read allowlist covers the required workflow, repository, and Git
-reference GETs and its write allowlist is
+surface. Its read allowlist covers the required workflow, repository, Git
+reference, and exact filtered bundle-ID/capability GETs. The two signing
+preflight routes require fixed sparse fields and reject broad or additional
+queries; no provisioning-profile content is requested or logged. Its write allowlist is
 exactly `POST /v1/ciBuildRuns`, `POST /v1/betaBuildLocalizations`,
 `PATCH /v1/betaBuildLocalizations/{id}`, `PATCH /v1/betaAppReviewDetails/{id}`,
 `POST /v1/betaAppReviewSubmissions`, and
@@ -458,4 +460,6 @@ Actions, uploads the signed archive.
 - [Including TestFlight notes](https://developer.apple.com/documentation/xcode/including-notes-for-testers-with-a-beta-release-of-your-app)
 - [Preparing an app to be the default browser](https://developer.apple.com/documentation/xcode/preparing-your-app-to-be-the-default-browser)
 - [Requesting managed capabilities](https://developer.apple.com/help/account/capabilities/capability-requests/)
+- [Provisioning with managed capabilities](https://developer.apple.com/help/account/reference/provisioning-with-managed-capabilities)
+- [Edit, download, or delete provisioning profiles](https://developer.apple.com/help/account/provisioning-profiles/edit-download-or-delete-profiles)
 - [`com.apple.developer.browser.app-installation`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.browser.app-installation)

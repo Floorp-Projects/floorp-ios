@@ -11,6 +11,8 @@ made and issues zero requests.
 Read allowlist (GET):
   /v1/apps, /v1/apps/{id}, /v1/apps/{id}/builds, /v1/builds,
   /v1/builds/{id},
+  /v1/bundleIds (exact identifier/platform/sparse-field query only),
+  /v1/bundleIds/{id}/bundleIdCapabilities (exact sparse-field query only),
   /v1/preReleaseVersions/{id},
   /v1/ciProducts, /v1/ciProducts/{id}, /v1/ciWorkflows,
   /v1/ciBuildRuns/{id}, /v1/ciBuildRuns/{id}/actions,
@@ -90,6 +92,9 @@ READ_ROUTES = [
     r"^/v1/betaAppReviewSubmissions$",
 ]
 
+BUNDLE_ID_FIELDS = "identifier,platform"
+BUNDLE_ID_CAPABILITY_FIELDS = "capabilityType"
+
 WRITE_ROUTES = {
     ("POST", r"^/v1/ciBuildRuns$"),
     ("POST", r"^/v1/betaBuildLocalizations$"),
@@ -109,11 +114,43 @@ class CredentialError(Exception):
 
 
 def route_allowed(method: str, path: str) -> bool:
-    path = path.split("?", 1)[0]
     if method == "GET":
-        return any(re.fullmatch(pattern, path) for pattern in READ_ROUTES)
+        parsed = urllib.parse.urlsplit(path)
+        if parsed.scheme or parsed.netloc or parsed.fragment:
+            return False
+        resource = parsed.path
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        if resource == "/v1/bundleIds":
+            identifier = query.get("filter[identifier]")
+            return (
+                set(query) == {
+                    "fields[bundleIds]",
+                    "filter[identifier]",
+                    "filter[platform]",
+                    "limit",
+                }
+                and query.get("fields[bundleIds]") == [BUNDLE_ID_FIELDS]
+                and query.get("filter[platform]") == ["IOS"]
+                and query.get("limit") == ["200"]
+                and isinstance(identifier, list)
+                and len(identifier) == 1
+                and re.fullmatch(r"[A-Za-z0-9.-]+", identifier[0]) is not None
+            )
+        capability_route = re.fullmatch(
+            r"/v1/bundleIds/([A-Za-z0-9._-]+)/bundleIdCapabilities", resource
+        )
+        if capability_route:
+            if capability_route.group(1) in {".", ".."}:
+                return False
+            return (
+                set(query) == {"fields[bundleIdCapabilities]"}
+                and query.get("fields[bundleIdCapabilities]")
+                == [BUNDLE_ID_CAPABILITY_FIELDS]
+            )
+        return any(re.fullmatch(pattern, resource) for pattern in READ_ROUTES)
+    resource = path.split("?", 1)[0]
     if method in ("POST", "PATCH"):
-        return any(method == allowed_method and re.fullmatch(pattern, path)
+        return any(method == allowed_method and re.fullmatch(pattern, resource)
                    for allowed_method, pattern in WRITE_ROUTES)
     return False
 

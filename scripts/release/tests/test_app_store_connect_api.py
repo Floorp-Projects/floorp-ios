@@ -111,8 +111,67 @@ class AllowlistTests(unittest.TestCase):
             "/v1/betaBuildLocalizations",
             "/v1/apps/abc/builds",
             "/v1/apps/abc",
+            (
+                "/v1/bundleIds?filter[identifier]=app.floorp.Floorp"
+                "&filter[platform]=IOS&fields[bundleIds]=identifier,platform"
+                "&limit=200"
+            ),
+            (
+                "/v1/bundleIds/3MC2Q46999/bundleIdCapabilities"
+                "?fields[bundleIdCapabilities]=capabilityType"
+            ),
         ]:
             self.assertTrue(asc.route_allowed("GET", path), path)
+
+    def test_signing_preflight_reads_require_exact_sparse_queries(self):
+        denied = [
+            "/v1/bundleIds",
+            "/v1/bundleIds?filter[identifier]=app.floorp.Floorp",
+            (
+                "/v1/bundleIds?filter[identifier]=app.floorp.Floorp"
+                "&filter[platform]=UNIVERSAL"
+                "&fields[bundleIds]=identifier,platform&limit=200"
+            ),
+            (
+                "/v1/bundleIds?filter[identifier]=app.floorp.Floorp"
+                "&filter[platform]=IOS&fields[bundleIds]=identifier,name,platform"
+                "&limit=200"
+            ),
+            (
+                "/v1/bundleIds?filter[identifier]=app.floorp.Floorp"
+                "&filter[platform]=IOS&fields[bundleIds]=identifier,platform"
+                "&include=profiles&fields[profiles]=profileContent&limit=200"
+            ),
+            (
+                "/v1/bundleIds?filter[identifier]=app.floorp.Floorp"
+                "&filter[identifier]=other.bundle&filter[platform]=IOS"
+                "&fields[bundleIds]=identifier,platform&limit=200"
+            ),
+            (
+                "/v1/bundleIds/3MC2Q46999/bundleIdCapabilities"
+                "?fields[bundleIdCapabilities]=capabilityType,settings"
+            ),
+            (
+                "/v1/bundleIds/3MC2Q46999/bundleIdCapabilities"
+                "?fields[bundleIdCapabilities]=capabilityType&limit=200"
+            ),
+            "/v1/bundleIds/3MC2Q46999/bundleIdCapabilities",
+            (
+                "/v1/bundleIds/./bundleIdCapabilities"
+                "?fields[bundleIdCapabilities]=capabilityType"
+            ),
+            (
+                "/v1/bundleIds/../bundleIdCapabilities"
+                "?fields[bundleIdCapabilities]=capabilityType"
+            ),
+            (
+                "/v1/bundleIds/invalid%2Fid/bundleIdCapabilities"
+                "?fields[bundleIdCapabilities]=capabilityType"
+            ),
+        ]
+        for path in denied:
+            with self.subTest(path=path):
+                self.assertFalse(asc.route_allowed("GET", path))
 
     def test_write_allowlist_is_exact(self):
         allowed = [
