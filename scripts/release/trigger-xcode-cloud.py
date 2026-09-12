@@ -24,6 +24,8 @@ from typing import Any, Callable
 
 CLIENT_PATH = Path(__file__).with_name("app-store-connect-api.py")
 RECEIPT_PATH = Path(__file__).with_name("floorp_xcode_cloud_build_receipt.py")
+REQUIRED_SIGNING_CAPABILITY = "DEFAULT_WEB_BROWSER"
+IOS_BUNDLE_ID_PLATFORMS = {"IOS", "UNIVERSAL"}
 
 
 def load_client():
@@ -199,6 +201,71 @@ def resolve_tag(
     return resolve_source_reference(api, repository_id, tag, "tag")
 
 
+def verify_distribution_signing_capability(
+    api: Callable[..., dict[str, Any]], expected_bundle_id: str
+) -> dict[str, str]:
+    receipt_validator = load_receipt_validator()
+    identifier = urllib.parse.quote(expected_bundle_id, safe="")
+    bundle_response = api(
+        "GET",
+        "/v1/bundleIds"
+        f"?filter[identifier]={identifier}"
+        "&filter[platform]=IOS"
+        "&fields[bundleIds]=identifier,platform"
+        "&limit=200",
+    )
+    bundle_ids = receipt_validator.collection_rows(
+        bundle_response, "bundleIds", "Floorp distribution bundle ID"
+    )
+    if len(bundle_ids) != 1:
+        raise ValueError(
+            "expected exactly one registered iOS bundle ID for "
+            f"{expected_bundle_id!r}, found {len(bundle_ids)}"
+        )
+    bundle_id = bundle_ids[0]
+    attributes = bundle_id.get("attributes")
+    if not isinstance(attributes, dict):
+        raise ValueError("Floorp distribution bundle ID has no attributes")
+    if attributes.get("identifier") != expected_bundle_id:
+        raise ValueError("Floorp distribution bundle ID identifier does not match")
+    platform = attributes.get("platform")
+    if not isinstance(platform, str) or platform not in IOS_BUNDLE_ID_PLATFORMS:
+        raise ValueError("Floorp distribution bundle ID is not iOS-compatible")
+
+    bundle_resource_id = bundle_id["id"]
+    capability_response = api(
+        "GET",
+        f"/v1/bundleIds/{bundle_resource_id}/bundleIdCapabilities"
+        "?fields[bundleIdCapabilities]=capabilityType",
+    )
+    capabilities = receipt_validator.collection_rows(
+        capability_response,
+        "bundleIdCapabilities",
+        "Floorp distribution bundle ID capabilities",
+    )
+    matches = []
+    for capability in capabilities:
+        capability_attributes = capability.get("attributes")
+        if not isinstance(capability_attributes, dict):
+            raise ValueError("Floorp bundle ID capability has no attributes")
+        capability_type = capability_attributes.get("capabilityType")
+        if not isinstance(capability_type, str) or not capability_type:
+            raise ValueError("Floorp bundle ID capability type is invalid")
+        if capability_type == REQUIRED_SIGNING_CAPABILITY:
+            matches.append(capability)
+    if len(matches) != 1:
+        raise ValueError(
+            f"App ID {expected_bundle_id!r} must have exactly one enabled "
+            f"{REQUIRED_SIGNING_CAPABILITY} capability; found {len(matches)}"
+        )
+    return {
+        "bundle_id_resource_id": bundle_resource_id,
+        "bundle_id_platform": platform,
+        "capability_id": matches[0]["id"],
+        "capability_type": REQUIRED_SIGNING_CAPABILITY,
+    }
+
+
 def build_request(workflow_id: str, reference_id: str) -> dict[str, Any]:
     return {
         "data": {
@@ -289,6 +356,9 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
         f"/v1/ciWorkflows/{arguments.workflow_id}?include=product,repository"
     )
     prior_state = client.canonical_state_sha256(workflow_response)
+    signing_preflight = verify_distribution_signing_capability(
+        api, arguments.expected_bundle_id
+    )
     token = client.make_jwt(issuer_id, key_id, private_key, int(time.time()))
     start_response = client.guarded_write(
         "POST",
@@ -409,6 +479,7 @@ def run(arguments: argparse.Namespace) -> dict[str, Any]:
             "reference_id": reference_id,
             "expected_head": arguments.expected_head,
         },
+        "signing_preflight": signing_preflight,
         "run": final_resource,
         "receipt": receipt,
         "build_url": (

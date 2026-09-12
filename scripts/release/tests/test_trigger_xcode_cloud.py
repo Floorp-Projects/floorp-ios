@@ -24,6 +24,14 @@ WORKFLOW_ID = "workflow-1"
 PRODUCT_ID = "product-1"
 REPOSITORY_ID = "repository-1"
 REFERENCE_ID = "reference-main"
+BUNDLE_RESOURCE_ID = "bundle-id-1"
+DEFAULT_BROWSER_CAPABILITY_ID = "capability-default-browser"
+LIVE_CAPABILITIES_WITHOUT_DEFAULT_BROWSER = [
+    "IN_APP_PURCHASE",
+    "WEB_BROWSER_PUBLIC_KEY_CREDENTIALS_REQUESTS",
+    "MULTIPATH",
+    "APP_GROUPS",
+]
 WORKFLOW_NAME = "Floorp TestFlight Manual"
 REPOSITORY_URL = "https://github.com/Floorp-Projects/floorp-ios.git"
 APP_ID = "6796708699"
@@ -101,11 +109,57 @@ def references_response(rows=None):
     }
 
 
+def bundle_ids_response(rows=None):
+    return {
+        "data": rows
+        if rows is not None
+        else [
+            {
+                "type": "bundleIds",
+                "id": BUNDLE_RESOURCE_ID,
+                "attributes": {"identifier": BUNDLE_ID, "platform": "UNIVERSAL"},
+            }
+        ],
+        "links": {"next": None},
+    }
+
+
+def capabilities_response(capability_types=None):
+    if capability_types is None:
+        capability_types = LIVE_CAPABILITIES_WITHOUT_DEFAULT_BROWSER + [
+            "DEFAULT_WEB_BROWSER"
+        ]
+    return {
+        "data": [
+            {
+                "type": "bundleIdCapabilities",
+                "id": (
+                    DEFAULT_BROWSER_CAPABILITY_ID
+                    if capability_type == "DEFAULT_WEB_BROWSER"
+                    else f"capability-{index}"
+                ),
+                "attributes": {"capabilityType": capability_type},
+            }
+            for index, capability_type in enumerate(capability_types)
+        ],
+        "links": {"next": None},
+    }
+
+
 class FakeAPI:
-    def __init__(self, workflow=None, references=None, product=None):
+    def __init__(
+        self,
+        workflow=None,
+        references=None,
+        product=None,
+        bundle_ids=None,
+        capabilities=None,
+    ):
         self.workflow = workflow or workflow_response()
         self.references = references or references_response()
         self.product = product or product_response()
+        self.bundle_ids = bundle_ids or bundle_ids_response()
+        self.capabilities = capabilities or capabilities_response()
         self.calls = []
 
     def __call__(self, method, path, body=None):
@@ -118,6 +172,12 @@ class FakeAPI:
             return self.references
         if path == f"/v1/scmRepositories/{REPOSITORY_ID}":
             return {"data": workflow_response()["included"][0]}
+        if path.startswith("/v1/bundleIds?"):
+            return self.bundle_ids
+        if path.startswith(
+            f"/v1/bundleIds/{BUNDLE_RESOURCE_ID}/bundleIdCapabilities?"
+        ):
+            return self.capabilities
         raise AssertionError(f"unexpected API request: {method} {path}")
 
 
@@ -193,6 +253,105 @@ class TriggerContractTests(unittest.TestCase):
                 APP_ID,
                 BUNDLE_ID,
             )
+
+    def test_signing_preflight_requires_exact_ios_bundle_and_default_browser_capability(self):
+        api = FakeAPI()
+
+        result = trigger.verify_distribution_signing_capability(api, BUNDLE_ID)
+
+        self.assertEqual(
+            result,
+            {
+                "bundle_id_resource_id": BUNDLE_RESOURCE_ID,
+                "bundle_id_platform": "UNIVERSAL",
+                "capability_id": DEFAULT_BROWSER_CAPABILITY_ID,
+                "capability_type": "DEFAULT_WEB_BROWSER",
+            },
+        )
+        self.assertEqual(
+            [(method, path) for method, path, _ in api.calls],
+            [
+                (
+                    "GET",
+                    "/v1/bundleIds"
+                    "?filter[identifier]=app.floorp.Floorp"
+                    "&filter[platform]=IOS"
+                    "&fields[bundleIds]=identifier,platform"
+                    "&limit=200",
+                ),
+                (
+                    "GET",
+                    f"/v1/bundleIds/{BUNDLE_RESOURCE_ID}/bundleIdCapabilities"
+                    "?fields[bundleIdCapabilities]=capabilityType",
+                ),
+            ],
+        )
+
+    def test_signing_preflight_rejects_missing_or_duplicate_bundle_id(self):
+        duplicate = bundle_ids_response()["data"] + [
+            {
+                "type": "bundleIds",
+                "id": "bundle-id-2",
+                "attributes": {"identifier": BUNDLE_ID, "platform": "UNIVERSAL"},
+            }
+        ]
+        for response, count in (
+            (bundle_ids_response([]), 0),
+            (bundle_ids_response(duplicate), 2),
+        ):
+            with self.subTest(count=count):
+                with self.assertRaisesRegex(
+                    ValueError, f"exactly one registered iOS bundle ID.*found {count}"
+                ):
+                    trigger.verify_distribution_signing_capability(
+                        FakeAPI(bundle_ids=response), BUNDLE_ID
+                    )
+
+    def test_signing_preflight_rejects_wrong_identity_and_platform(self):
+        for attributes, message in (
+            ({"identifier": "other.bundle", "platform": "UNIVERSAL"}, "identifier"),
+            ({"identifier": BUNDLE_ID, "platform": "MAC_OS"}, "iOS-compatible"),
+            ({"identifier": BUNDLE_ID, "platform": "UNKNOWN"}, "iOS-compatible"),
+        ):
+            response = bundle_ids_response()
+            response["data"][0]["attributes"] = attributes
+            with self.subTest(attributes=attributes):
+                with self.assertRaisesRegex(ValueError, message):
+                    trigger.verify_distribution_signing_capability(
+                        FakeAPI(bundle_ids=response), BUNDLE_ID
+                    )
+
+    def test_signing_preflight_rejects_missing_or_duplicate_required_capability(self):
+        duplicate = capabilities_response(
+            ["DEFAULT_WEB_BROWSER", "DEFAULT_WEB_BROWSER"]
+        )
+        duplicate["data"][1]["id"] = "capability-default-browser-2"
+        for response, count in (
+            (capabilities_response(LIVE_CAPABILITIES_WITHOUT_DEFAULT_BROWSER), 0),
+            (duplicate, 2),
+        ):
+            with self.subTest(count=count):
+                with self.assertRaisesRegex(
+                    ValueError, f"DEFAULT_WEB_BROWSER capability; found {count}"
+                ):
+                    trigger.verify_distribution_signing_capability(
+                        FakeAPI(capabilities=response), BUNDLE_ID
+                    )
+
+    def test_signing_preflight_rejects_paginated_state(self):
+        bundle_response = bundle_ids_response()
+        bundle_response["links"]["next"] = "https://api.appstoreconnect.apple.com/v1/next"
+        capability_response = capabilities_response()
+        capability_response["links"]["next"] = (
+            "https://api.appstoreconnect.apple.com/v1/next"
+        )
+        for api in (
+            FakeAPI(bundle_ids=bundle_response),
+            FakeAPI(capabilities=capability_response),
+        ):
+            with self.subTest(calls=api.calls):
+                with self.assertRaisesRegex(ValueError, "paginated"):
+                    trigger.verify_distribution_signing_capability(api, BUNDLE_ID)
 
     def test_resolve_branch_rejects_deleted_or_duplicate_references(self):
         api = FakeAPI(
@@ -367,6 +526,12 @@ class TriggerContractTests(unittest.TestCase):
                     return product_response()
                 if path == "/v1/builds?filter[app]=6796708699&sort=-version&limit=200":
                     return {"data": [], "links": {"next": None}}
+                if path.startswith("/v1/bundleIds?"):
+                    return bundle_ids_response()
+                if path.startswith(
+                    f"/v1/bundleIds/{BUNDLE_RESOURCE_ID}/bundleIdCapabilities?"
+                ):
+                    return capabilities_response()
                 if path.startswith(
                     f"/v1/scmRepositories/{REPOSITORY_ID}/gitReferences"
                 ):
@@ -421,7 +586,15 @@ class TriggerContractTests(unittest.TestCase):
             trigger.load_client = original_load_client
 
         self.assertEqual(report["run"]["id"], "run-1")
+        self.assertEqual(
+            report["signing_preflight"]["capability_type"],
+            "DEFAULT_WEB_BROWSER",
+        )
         self.assertTrue(all(method == "GET" for method, _, _ in fake_client.reads))
+        self.assertIn(
+            f"/v1/bundleIds/{BUNDLE_RESOURCE_ID}/bundleIdCapabilities",
+            fake_client.reads[-1][1],
+        )
         self.assertEqual(len(fake_client.writes), 1)
         method, path, token, encoded, intended, prior, guard = fake_client.writes[0]
         self.assertEqual((method, path, token), ("POST", "/v1/ciBuildRuns", "jwt"))
@@ -433,6 +606,77 @@ class TriggerContractTests(unittest.TestCase):
         self.assertEqual(
             json.loads(encoded), trigger.build_request(WORKFLOW_ID, REFERENCE_ID)
         )
+
+    def test_run_missing_default_browser_capability_never_dispatches(self):
+        class FakeClient:
+            def __init__(self):
+                self.writes = []
+
+            @staticmethod
+            def load_credentials(arguments):
+                return "issuer", "key", Path("/unused/AuthKey.p8")
+
+            @staticmethod
+            def make_jwt(*arguments):
+                return "jwt"
+
+            @staticmethod
+            def canonical_state_sha256(value):
+                return "f" * 64
+
+            @staticmethod
+            def api_call(method, path, token):
+                if path.startswith(f"/v1/ciWorkflows/{WORKFLOW_ID}"):
+                    return workflow_response()
+                if path.startswith(f"/v1/ciProducts/{PRODUCT_ID}"):
+                    return product_response()
+                if path.startswith(
+                    f"/v1/scmRepositories/{REPOSITORY_ID}/gitReferences"
+                ):
+                    return references_response()
+                if path == f"/v1/builds?filter[app]={APP_ID}&sort=-version&limit=200":
+                    return {"data": [], "links": {"next": None}}
+                if path.startswith("/v1/bundleIds?"):
+                    return bundle_ids_response()
+                if path.startswith(
+                    f"/v1/bundleIds/{BUNDLE_RESOURCE_ID}/bundleIdCapabilities?"
+                ):
+                    return capabilities_response(
+                        LIVE_CAPABILITIES_WITHOUT_DEFAULT_BROWSER
+                    )
+                raise AssertionError(f"unexpected read: {method} {path}")
+
+            def guarded_write(self, *arguments):
+                self.writes.append(arguments)
+                raise AssertionError("Xcode Cloud dispatch must remain unreachable")
+
+        fake_client = FakeClient()
+        original_load_client = trigger.load_client
+        trigger.load_client = lambda: fake_client
+        try:
+            with self.assertRaisesRegex(ValueError, "DEFAULT_WEB_BROWSER"):
+                trigger.run(
+                    SimpleNamespace(
+                        authorize_mutation=True,
+                        expected_head="a" * 40,
+                        branch="main",
+                        source_tag=None,
+                        wait=False,
+                        workflow_id=WORKFLOW_ID,
+                        expected_workflow_name=WORKFLOW_NAME,
+                        expected_repository=REPOSITORY_URL,
+                        team_id="team-1",
+                        app_id=APP_ID,
+                        expected_bundle_id=BUNDLE_ID,
+                        expected_marketing_version="0.3.0",
+                        expected_platform="IOS",
+                        expected_min_os_version="18.4",
+                    )
+                )
+        finally:
+            trigger.load_client = original_load_client
+
+        self.assertEqual(fake_client.writes, [])
 
     def test_waited_run_returns_exact_source_bound_new_build_receipt(self):
         class FakeClient:
@@ -505,6 +749,12 @@ class TriggerContractTests(unittest.TestCase):
                         }],
                         "links": {"next": None},
                     }
+                if path.startswith("/v1/bundleIds?"):
+                    return bundle_ids_response()
+                if path.startswith(
+                    f"/v1/bundleIds/{BUNDLE_RESOURCE_ID}/bundleIdCapabilities?"
+                ):
+                    return capabilities_response()
                 if path == "/v1/ciBuildRuns/run-1?include=workflow":
                     return {
                         "data": {
