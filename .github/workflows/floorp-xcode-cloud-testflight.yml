@@ -259,6 +259,7 @@ jobs:
           scripts/release/collect-floorp-release-evidence.sh \
             --archive "$archive" \
             --ipa "$ipa" \
+            --cloud-archive \
             --source-sha "$GITHUB_SHA" \
             --ci-run-url "$ci_run_url" \
             --app-store-connect-build-id "$FLOORP_ASC_BUILD_ID" \
@@ -268,7 +269,7 @@ jobs:
             --evidence "$evidence" \
             --schema scripts/release/floorp-release-evidence.schema.json \
             --phase publication \
-            --artifact-kind local-export \
+            --artifact-kind cloud-archive \
             --expected-source-sha "$GITHUB_SHA" \
             --expected-marketing-version "$FLOORP_MARKETING_VERSION" \
             --expected-build-number "$FLOORP_ASC_BUILD_NUMBER" \

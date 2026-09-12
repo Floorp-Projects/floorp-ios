@@ -302,6 +302,7 @@ def validate_archive_metadata(
     archive: Path,
     evidence: dict,
     expected_source_sha: str,
+    artifact_kind: str,
 ) -> tuple[Path, str, str]:
     check(
         archive.is_dir() and not archive.is_symlink(),
@@ -351,17 +352,65 @@ def validate_archive_metadata(
         isinstance(signing_identity, str),
         "archive signing identity must be a string",
     )
-    check(
-        team_id == expected["team_id"],
-        "release evidence does not match archive signing team",
-    )
-    check(team_id == FLOORP_TEAM_ID, f"archive signing team is not {FLOORP_TEAM_ID}")
-    check(
-        "Apple Development" in signing_identity
-        or "Apple Distribution" in signing_identity,
-        f"unexpected archive signing identity: {signing_identity}",
-    )
+    if artifact_kind == "cloud-archive":
+        # Xcode Cloud publishes the pre-distribution archive. That archive is
+        # ad-hoc signed and carries no team or signing identity; the exported
+        # IPA is the authoritative distribution artifact and is validated
+        # separately, so the archive must simply be unsigned here.
+        check(
+            team_id == "" and signing_identity == "",
+            "cloud archive must not carry a distribution signing team or identity",
+        )
+    else:
+        check(
+            team_id == expected["team_id"],
+            "release evidence does not match archive signing team",
+        )
+        check(team_id == FLOORP_TEAM_ID, f"archive signing team is not {FLOORP_TEAM_ID}")
+        check(
+            "Apple Development" in signing_identity
+            or "Apple Distribution" in signing_identity,
+            f"unexpected archive signing identity: {signing_identity}",
+        )
     return app, team_id, signing_identity
+
+
+def assert_adhoc_archive_signature(target: Path) -> None:
+    """Assert an Xcode Cloud archive is ad-hoc signed, never distribution signed."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/codesign", "-dvv", str(target)],
+            capture_output=True,
+        )
+    except OSError as error:
+        raise ValidationError(f"failed to run codesign for {target}: {error}") from error
+    stderr = result.stderr.decode("utf-8", errors="replace")
+    detail = stderr.strip() or f"exit status {result.returncode}"
+    check(result.returncode == 0, f"codesign inspection failed for {target}: {detail}")
+
+    def unique_detail(prefix: str, label: str) -> str:
+        values = [
+            line[len(prefix):]
+            for line in stderr.splitlines()
+            if line.startswith(prefix)
+        ]
+        check(len(values) == 1 and bool(values[0]), f"codesign {label} is missing or ambiguous")
+        return values[0]
+
+    authorities = [
+        line[len("Authority="):]
+        for line in stderr.splitlines()
+        if line.startswith("Authority=")
+    ]
+    check(not authorities, "cloud archive must not carry a distribution authority")
+    check(
+        unique_detail("Identifier=", "identifier") == FLOORP_BUNDLE_ID,
+        "cloud archive code-signing identifier is not the Floorp bundle ID",
+    )
+    check(
+        unique_detail("Signature=", "signature") == "adhoc",
+        "cloud archive must be ad-hoc signed",
+    )
 
 
 def extract_ipa_app(ipa_path: Path, extraction_root: Path) -> tuple[dict, Path]:
@@ -977,7 +1026,7 @@ def validate_artifact_kind(
         check(evidence["ipa_info"] is None, "archive-only evidence must not contain IPA metadata")
         return None
     else:
-        check(archive_only is False, "local-export evidence must not be archive-only")
+        check(archive_only is False, "exported evidence must not be archive-only")
         ipa_path = canonical_existing_path(
             required_string(evidence["ipa_path"], "IPA path"),
             "IPA",
@@ -1356,12 +1405,12 @@ def validate_release_evidence(
     check(isinstance(evidence, dict), "evidence must be an object")
     check(phase in {"pre-upload", "publication"}, f"unsupported phase: {phase}")
     check(
-        artifact_kind in {"archive-only", "local-export"},
+        artifact_kind in {"archive-only", "local-export", "cloud-archive"},
         f"unsupported artifact kind: {artifact_kind}",
     )
     check(
-        phase != "publication" or artifact_kind == "local-export",
-        "publication validation requires a local-export artifact; "
+        phase != "publication" or artifact_kind in {"local-export", "cloud-archive"},
+        "publication validation requires a local-export or cloud-archive artifact; "
         "archive-only publication is not byte-bound to App Store Connect",
     )
     validate_shape(schema, evidence)
@@ -1402,19 +1451,20 @@ def validate_release_evidence(
         evidence["bundle_id"] == archive_info["bundle_id"],
         "bundle ID differs from archive Info.plist",
     )
-    check(
-        evidence["team_id"] == archive_info["team_id"],
-        "team ID differs from archive Info.plist",
-    )
+    if artifact_kind != "cloud-archive":
+        check(
+            evidence["team_id"] == archive_info["team_id"],
+            "team ID differs from archive Info.plist",
+        )
 
     archive = canonical_existing_path(
         evidence["archive_path"], "archive", kind="directory"
     )
     archived_app, archive_team_id, archive_signing_identity = (
-        validate_archive_metadata(archive, evidence, expected_source_sha)
+        validate_archive_metadata(archive, evidence, expected_source_sha, artifact_kind)
     )
 
-    if artifact_kind == "local-export":
+    if artifact_kind in {"local-export", "cloud-archive"}:
         check(
             evidence["team_id"] == FLOORP_TEAM_ID,
             f"release team ID is not {FLOORP_TEAM_ID}",
@@ -1458,20 +1508,27 @@ def validate_release_evidence(
         retained_dsym_uuids,
         "archive",
     )
-    archive_signature = inspect_code_signature(archived_app)
-    check(
-        archive_signature["identifier"] == FLOORP_BUNDLE_ID,
-        "archive code-signing identifier is not the Floorp bundle ID",
-    )
-    check(
-        archive_signature["team_id"] == archive_team_id,
-        "archive code-signing team differs from archive Info.plist",
-    )
-    check(
-        archive_signature["signing_identity"] == archive_signing_identity,
-        "archive code-signing authority differs from archive Info.plist",
-    )
-    validate_entitlements(archive_signature["entitlements"])
+    if artifact_kind == "cloud-archive":
+        # The Xcode Cloud archive is ad-hoc signed, so its code signature is
+        # not a distribution signature: assert that fact and take the release
+        # signing identity, team, and entitlements from the exported IPA.
+        assert_adhoc_archive_signature(archived_app)
+        archive_signature = None
+    else:
+        archive_signature = inspect_code_signature(archived_app)
+        check(
+            archive_signature["identifier"] == FLOORP_BUNDLE_ID,
+            "archive code-signing identifier is not the Floorp bundle ID",
+        )
+        check(
+            archive_signature["team_id"] == archive_team_id,
+            "archive code-signing team differs from archive Info.plist",
+        )
+        check(
+            archive_signature["signing_identity"] == archive_signing_identity,
+            "archive code-signing authority differs from archive Info.plist",
+        )
+        validate_entitlements(archive_signature["entitlements"])
 
     exported_signature = validate_artifact_kind(
         evidence,
@@ -1503,10 +1560,10 @@ def validate_release_evidence(
         "release artifact entitlements do not match evidence",
     )
     validate_entitlements(selected_signature["entitlements"])
-    if artifact_kind == "local-export":
+    if artifact_kind in {"local-export", "cloud-archive"}:
         check(
             "Apple Distribution" in selected_signature["signing_identity"],
-            "local-export IPA must use an Apple Distribution identity",
+            f"{artifact_kind} IPA must use an Apple Distribution identity",
         )
 
     validate_phase_binding(
@@ -1563,7 +1620,9 @@ def main(argv=None) -> int:
     arguments.add_argument("--schema", required=True, type=Path)
     arguments.add_argument("--phase", required=True, choices=("pre-upload", "publication"))
     arguments.add_argument(
-        "--artifact-kind", required=True, choices=("archive-only", "local-export")
+        "--artifact-kind",
+        required=True,
+        choices=("archive-only", "local-export", "cloud-archive"),
     )
     arguments.add_argument("--expected-source-sha", required=True)
     arguments.add_argument("--expected-marketing-version", required=True)

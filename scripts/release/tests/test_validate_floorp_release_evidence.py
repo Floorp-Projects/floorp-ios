@@ -867,7 +867,35 @@ class FloorpReleaseEvidenceValidatorTests(unittest.TestCase):
         applications.symlink_to(external, target_is_directory=True)
 
         with self.assertRaisesRegex(validator.ValidationError, "symbolic-link"):
-            validator.validate_archive_metadata(archive, evidence, SOURCE_SHA)
+            validator.validate_archive_metadata(archive, evidence, SOURCE_SHA, "local-export")
+
+    def test_cloud_archive_requires_an_adhoc_signature(self):
+        adhoc = (
+            f"Identifier={BUNDLE_ID}\n"
+            "Signature=adhoc\n"
+            "TeamIdentifier=not set\n"
+        ).encode()
+
+        def run_adhoc(command, **kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=adhoc)
+
+        with mock.patch.object(validator.subprocess, "run", run_adhoc):
+            validator.assert_adhoc_archive_signature(self.root / "Client.app")
+
+        distribution = (
+            f"Identifier={BUNDLE_ID}\n"
+            f"Authority={SIGNING_IDENTITY}\n"
+            "TeamIdentifier=DV2U35YBHT\n"
+        ).encode()
+
+        def run_distribution(command, **kwargs):
+            return subprocess.CompletedProcess(
+                command, 0, stdout=b"", stderr=distribution
+            )
+
+        with mock.patch.object(validator.subprocess, "run", run_distribution):
+            with self.assertRaisesRegex(validator.ValidationError, "authority"):
+                validator.assert_adhoc_archive_signature(self.root / "Client.app")
 
     def test_artifact_paths_must_be_absolute_and_canonical(self):
         evidence = self.make_evidence()

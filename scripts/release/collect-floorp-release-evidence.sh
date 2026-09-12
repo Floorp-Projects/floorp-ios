@@ -25,11 +25,13 @@ usage() {
 Usage:
   collect-floorp-release-evidence.sh \
     --archive PATH [--ipa PATH] --source-sha SHA \
-    [--archive-only] [--ci-run-url URL] [--xcresult-path PATH] \
+    [--archive-only] [--cloud-archive] [--ci-run-url URL] [--xcresult-path PATH] \
     [--app-store-connect-build-id ID] [--export-status STATUS] \
     --output PATH
 
   --archive-only   validate a signed archive without an exported IPA
+  --cloud-archive  validate an ad-hoc Xcode Cloud archive whose distribution
+                   signing team, identity, and entitlements come from the IPA
   --output         absolute path for the evidence JSON
 EOF
 }
@@ -38,6 +40,7 @@ ARCHIVE=""
 IPA=""
 SOURCE_SHA=""
 ARCHIVE_ONLY=0
+CLOUD_ARCHIVE=0
 CI_RUN_URL=""
 XCRESULT_PATH=""
 ASC_BUILD_ID=""
@@ -50,6 +53,7 @@ while [[ $# -gt 0 ]]; do
         --ipa) IPA="$2"; shift 2 ;;
         --source-sha) SOURCE_SHA="$2"; shift 2 ;;
         --archive-only) ARCHIVE_ONLY=1; shift ;;
+        --cloud-archive) CLOUD_ARCHIVE=1; shift ;;
         --ci-run-url) CI_RUN_URL="$2"; shift 2 ;;
         --xcresult-path) XCRESULT_PATH="$2"; shift 2 ;;
         --app-store-connect-build-id) ASC_BUILD_ID="$2"; shift 2 ;;
@@ -71,6 +75,10 @@ if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 if [[ "$ARCHIVE_ONLY" -eq 0 && -z "$IPA" ]]; then
     echo "IPA is required unless --archive-only is set." >&2
+    exit 2
+fi
+if [[ "$CLOUD_ARCHIVE" -eq 1 && ( "$ARCHIVE_ONLY" -eq 1 || -z "$IPA" ) ]]; then
+    echo "--cloud-archive requires an exported IPA and cannot be combined with --archive-only." >&2
     exit 2
 fi
 
@@ -215,24 +223,48 @@ SIGNING_IDENTITY="$(
 )"
 ARCHIVE_TEAM_ID="$TEAM_ID"
 
-if [[ -z "$ARCHIVE_TEAM_ID" || -z "$SIGNING_IDENTITY" ]]; then
-    echo "Archive signing team and identity are required." >&2
-    exit 2
-fi
-
-if ! codesign --verify --strict -R "$APPLE_TEAM_REQUIREMENT" "$APP"; then
-    echo "Archived app code signature is invalid: $APP" >&2
-    exit 2
-fi
-
-if ENTITLEMENTS_JSON="$(
-    codesign -d --entitlements :- "$APP" 2>/dev/null \
-        | plutil -convert json -o - -- - 2>/dev/null
-)" && [[ -n "$ENTITLEMENTS_JSON" ]]; then
-    :
+if [[ "$CLOUD_ARCHIVE" -eq 1 ]]; then
+    # Xcode Cloud publishes an ad-hoc archive with no team, identity, or
+    # distribution profile. The exported IPA is the authoritative signed
+    # artifact, so assert the archive really is an ad-hoc signature of the
+    # Floorp bundle and derive the release signing team, identity, and
+    # entitlements from the IPA below.
+    if [[ -n "$ARCHIVE_TEAM_ID" || -n "$SIGNING_IDENTITY" ]]; then
+        echo "Cloud archive must be ad-hoc without a signing team or identity." >&2
+        exit 2
+    fi
+    ARCHIVE_SIGNATURE_DETAIL="$(codesign -dvv "$APP" 2>&1 || true)"
+    ARCHIVE_IDENTIFIER="$(
+        printf '%s\n' "$ARCHIVE_SIGNATURE_DETAIL" | sed -n 's/^Identifier=//p' | head -1
+    )"
+    ARCHIVE_SIGNATURE_KIND="$(
+        printf '%s\n' "$ARCHIVE_SIGNATURE_DETAIL" | sed -n 's/^Signature=//p' | head -1
+    )"
+    if [[ "$ARCHIVE_IDENTIFIER" != "$BUNDLE_ID" || "$ARCHIVE_SIGNATURE_KIND" != "adhoc" ]]; then
+        echo "Cloud archive is not an ad-hoc signature of $BUNDLE_ID." >&2
+        exit 2
+    fi
+    ENTITLEMENTS_JSON=""
 else
-    echo "Could not read signed archive entitlements: $APP" >&2
-    exit 2
+    if [[ -z "$ARCHIVE_TEAM_ID" || -z "$SIGNING_IDENTITY" ]]; then
+        echo "Archive signing team and identity are required." >&2
+        exit 2
+    fi
+
+    if ! codesign --verify --strict -R "$APPLE_TEAM_REQUIREMENT" "$APP"; then
+        echo "Archived app code signature is invalid: $APP" >&2
+        exit 2
+    fi
+
+    if ENTITLEMENTS_JSON="$(
+        codesign -d --entitlements :- "$APP" 2>/dev/null \
+            | plutil -convert json -o - -- - 2>/dev/null
+    )" && [[ -n "$ENTITLEMENTS_JSON" ]]; then
+        :
+    else
+        echo "Could not read signed archive entitlements: $APP" >&2
+        exit 2
+    fi
 fi
 
 DSYM_ENTRIES="$(python3 - "$ARCHIVE/dSYMs" <<'PYEOF'
