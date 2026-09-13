@@ -1068,22 +1068,36 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
     }
 
+    private static func orderedStartupRestorationRecords(
+        _ records: [FloorpNativeWebExtensionRecord]
+    ) -> [FloorpNativeWebExtensionRecord] {
+        records.enumerated().sorted { lhs, rhs in
+            let lhsFailsClosed = FloorpNativeWebExtensionCatalog.item(identifier: lhs.element.id)?
+                .navigationReadinessFailurePolicy == .failClosed
+            let rhsFailsClosed = FloorpNativeWebExtensionCatalog.item(identifier: rhs.element.id)?
+                .navigationReadinessFailurePolicy == .failClosed
+            if lhsFailsClosed != rhsFailsClosed {
+                return !lhsFailsClosed
+            }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+#if DEBUG || TESTING
+    static func startupRestorationOrderForTesting(
+        _ records: [FloorpNativeWebExtensionRecord]
+    ) -> [String] {
+        orderedStartupRestorationRecords(records).map(\.id)
+    }
+#endif
+
     // swiftlint:disable:next function_body_length
     func restoreInstalledExtensions() async {
         defer { finishAllStartupNavigationReadiness() }
         guard !isTornDown, !Task.isCancelled else { return }
         recoverInterruptedTransactions()
         var tabsNeedingReload = [ObjectIdentifier: Tab]()
-        let restorationRecords = registry.extensions.enumerated().sorted { lhs, rhs in
-            let lhsFailsClosed = FloorpNativeWebExtensionCatalog.item(identifier: lhs.element.id)?
-                .navigationReadinessFailurePolicy == .failClosed
-            let rhsFailsClosed = FloorpNativeWebExtensionCatalog.item(identifier: rhs.element.id)?
-                .navigationReadinessFailurePolicy == .failClosed
-            if lhsFailsClosed != rhsFailsClosed {
-                return lhsFailsClosed
-            }
-            return lhs.offset < rhs.offset
-        }.map(\.element)
+        let restorationRecords = Self.orderedStartupRestorationRecords(registry.extensions)
         for snapshotRecord in restorationRecords {
             defer { finishStartupNavigationReadiness(for: snapshotRecord.id) }
             guard !isTornDown, !Task.isCancelled else { return }

@@ -38,6 +38,24 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         try await super.tearDown()
     }
 
+    @MainActor
+    func testExtensionReadinessReplayIsLimitedToIdempotentBodylessRequests() {
+        let subject = MockBrowserViewController(
+            profile: profile,
+            tabManager: tabManager,
+            userInitiatedQueue: MockDispatchQueue()
+        )
+        let url = URL(string: "https://www.youtube.com/watch?v=test")!
+
+        XCTAssertTrue(subject.canReplayAfterExtensionReadiness(URLRequest(url: url)))
+        var post = URLRequest(url: url)
+        post.httpMethod = "POST"
+        XCTAssertFalse(subject.canReplayAfterExtensionReadiness(post))
+        var bodyRequest = URLRequest(url: url)
+        bodyRequest.httpBody = Data("payload".utf8)
+        XCTAssertFalse(subject.canReplayAfterExtensionReadiness(bodyRequest))
+    }
+
     // MARK: - Decide policy for navigation action
     @MainActor
     func testWebViewDecidePolicyForNavigationAction_cancelWhenTabNotInTabManager() {
@@ -308,7 +326,7 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         XCTAssertNil(staleAction.targetFrame)
         XCTAssertNil(currentAction.targetFrame)
         let stalePolicy = expectation(description: "Stale navigation is cancelled")
-        let currentPolicy = expectation(description: "Latest navigation is allowed")
+        let currentPolicy = expectation(description: "Latest navigation is deferred for replay")
         var staleCallbackCount = 0
         var currentCallbackCount = 0
 
@@ -319,16 +337,34 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         }
         subject.webView(tab.webView!, decidePolicyFor: currentAction) { policy in
             currentCallbackCount += 1
-            XCTAssertEqual(policy, .allow)
+            XCTAssertEqual(policy, .cancel)
             currentPolicy.fulfill()
         }
 
         await fulfillment(of: [stalePolicy, currentPolicy], timeout: 10)
         XCTAssertEqual(staleCallbackCount, 1)
         XCTAssertEqual(currentCallbackCount, 1)
+        for _ in 0..<100 {
+            if !subject.preparedExtensionNavigationReplays.isEmpty { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let replayedRequest = try XCTUnwrap((tab.webView as? MockTabWebView)?.loadedRequest)
+        XCTAssertEqual(replayedRequest, currentAction.request)
+
+        let replayedAction = MockNavigationAction(url: url, type: .linkActivated)
+        let replayPolicy = expectation(description: "Prepared replay is allowed")
+        subject.webView(tab.webView!, decidePolicyFor: replayedAction) { policy in
+            XCTAssertEqual(policy, .allow)
+            replayPolicy.fulfill()
+        }
+        await fulfillment(of: [replayPolicy], timeout: 1)
         XCTAssertFalse(host.consumePreparedNavigation(staleAction))
         XCTAssertFalse(host.consumePreparedNavigation(currentAction))
 
+        host.setContextReadyForTesting(
+            false,
+            identifier: FloorpNativeWebExtensionCatalog.darkReader.identifier
+        )
         let supersededAfterPreparation = MockNavigationAction(
             url: url,
             type: .linkActivated
