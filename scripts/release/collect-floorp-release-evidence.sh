@@ -199,6 +199,7 @@ if [[ ! -f "$PLIST" || -L "$PLIST" ]]; then
 fi
 MARKETING_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
 BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")"
+ARCHIVE_BUILD_NUMBER="$BUILD_NUMBER"
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")"
 if ! ARCHIVE_SOURCE_SHA="$(
     /usr/libexec/PlistBuddy -c 'Print :MozFloorpSourceSHA' "$PLIST"
@@ -450,6 +451,11 @@ PYEOF
         echo "Could not read signed IPA entitlements: $IPA" >&2
         exit 2
     fi
+    if [[ "$CLOUD_ARCHIVE" -eq 1 ]]; then
+        # Xcode Cloud renumbers CFBundleVersion during the distribution export,
+        # so the exported IPA is authoritative for the release build number.
+        BUILD_NUMBER="$IPA_BUILD_NUMBER"
+    fi
 fi
 
 FINAL_ARCHIVE_SHA256="$(python3 "$SCRIPT_DIR/floorp_archive_tree.py" "$ARCHIVE")"
@@ -486,7 +492,8 @@ python3 - \
     "$EXPORT_STATUS" \
     "$ARCHIVE_ONLY" \
     "$IPA_MARKETING_VERSION" \
-    "$IPA_BUILD_NUMBER" <<'PYEOF'
+    "$IPA_BUILD_NUMBER" \
+    "$ARCHIVE_BUILD_NUMBER" <<'PYEOF'
 import json
 import os
 import sys
@@ -498,6 +505,7 @@ from pathlib import Path
     archive_team_id, archive, archive_sha256, ipa, ipa_sha256, signing_identity,
     entitlements_json, dsym_entries, asc_build_id, ci_run_url, xcresult_path,
     export_status, archive_only, ipa_marketing_version, ipa_build_number,
+    archive_build_number,
 ) = sys.argv[1:]
 
 is_archive_only = archive_only == "1"
@@ -517,7 +525,7 @@ evidence = {
     "signing_identity": signing_identity or None,
     "archive_info": {
         "marketing_version": marketing_version,
-        "build_number": build_number,
+        "build_number": archive_build_number,
         "bundle_id": bundle_id,
         "team_id": archive_team_id,
     },
