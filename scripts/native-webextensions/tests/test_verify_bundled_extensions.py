@@ -1560,8 +1560,8 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
             lambda files: self.replace_archive_text(
                 files,
                 "js/scripting-manager.js",
-                "for ( let attempt = 1; attempt <= 3; attempt++ )",
-                "for ( let attempt = 1; attempt <= 1; attempt++ )",
+                "const retryDelays = [ 0, 50, 100, 250, 500, 1000, 2000 ];",
+                "const retryDelays = [ 0 ];",
             ),
         )
 

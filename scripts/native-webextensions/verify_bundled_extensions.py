@@ -162,7 +162,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "69f543ab1478e803c4835b92269927cdca7f9d8270a3d123f670c19e1389a6d0",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "a0f414de9a4667ed86bc6d9303b7e56a0b49d3648fead3f167776cf958ac5089",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -266,7 +266,7 @@ EXPECTED = (
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "373893d34822aa687b50f3e7273d1612a8e4af2477942b4c7660fa5d594b571b",
+            "sha256": "dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
@@ -781,7 +781,9 @@ EXPECTED = (
                 "registerContentScripts.pendingOp = operation.catch",
                 "rulesetsDetails.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)",
                 "export async function reconcileSafariContentScripts(scripting, desired)",
-                "for ( let attempt = 1; attempt <= 3; attempt++ )",
+                "const retryDelays = [ 0, 50, 100, 250, 500, 1000, 2000 ];",
+                "reconcileSafariContentScripts.pendingOp = operation.catch",
+                "registrationMismatch(afterFailure, desired) === false",
                 "await scripting.getRegisteredContentScripts()",
                 "floorp-safari-registration-sentinel",
                 "matches: [ 'https://floorp.invalid/*' ]",
