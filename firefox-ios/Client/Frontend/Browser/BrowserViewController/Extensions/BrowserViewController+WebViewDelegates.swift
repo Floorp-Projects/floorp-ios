@@ -754,7 +754,7 @@ extension BrowserViewController: WKNavigationDelegate {
     // This is the place where we decide what to do with a new navigation action. There are a number of special schemes
     // and http(s) urls that need to be handled in a different way. All the logic for that is inside this delegate
     // method.
-    // swiftlint:disable:next function_body_length
+    // swiftlint:disable function_body_length
     @MainActor
     func webView(
         _ webView: WKWebView,
@@ -914,6 +914,7 @@ extension BrowserViewController: WKNavigationDelegate {
             decisionHandler: decisionHandler
         )
     }
+    // swiftlint:enable function_body_length
 
     @MainActor
     func presentNavigationProtectionFailure(
