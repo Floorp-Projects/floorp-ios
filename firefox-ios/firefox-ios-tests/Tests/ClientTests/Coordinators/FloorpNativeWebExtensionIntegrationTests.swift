@@ -87,6 +87,22 @@ private final class FloorpClosePreparationTestGate {
 
 @MainActor
 final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
+    func testStartupRestoresVisualExtensionsBeforeFailClosedBlockers() throws {
+#if DEBUG || TESTING
+        let orderedIdentifiers = FloorpNativeWebExtensionHost.startupRestorationOrderForTesting([
+            makeUBOLRecord(),
+            makeRecord()
+        ])
+
+        XCTAssertEqual(orderedIdentifiers, [
+            FloorpNativeWebExtensionCatalog.darkReader.identifier,
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite.identifier
+        ])
+#else
+        throw XCTSkip("The startup ordering accessor is available only in test builds")
+#endif
+    }
+
     func testColdReadinessBudgetsStayScopedToLifecycleOwnedSurfaces() throws {
 #if DEBUG || TESTING
         XCTAssertEqual(
@@ -5409,7 +5425,6 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
 #if DEBUG || TESTING
         var closePreparationCount = 0
         var onCloseCount = 0
-        var completionCount = 0
         let popup = FloorpNativeWebExtensionActionPopupViewController(
             url: try XCTUnwrap(URL(string: "about:blank")),
             configuration: WKWebViewConfiguration(),
@@ -5438,7 +5453,8 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 $0.source.contains("floorpPrepareToClose") && $0.source.contains("provisional: true")
             }
         )
-        popup.requestCloseForTesting { completionCount += 1 }
+        XCTAssertTrue(popup.hasCloseButtonForTesting)
+        popup.tapCloseButtonForTesting()
         for _ in 0..<40 {
             if root.presentedViewController == nil { break }
             try await Task.sleep(nanoseconds: 25_000_000)
@@ -5447,7 +5463,6 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertNil(root.presentedViewController)
         XCTAssertEqual(closePreparationCount, 0)
         XCTAssertEqual(onCloseCount, 1)
-        XCTAssertEqual(completionCount, 1)
         XCTAssertNil(popup.presentedViewController)
 #else
         throw XCTSkip("The close-preparation test seam is available only in test builds")

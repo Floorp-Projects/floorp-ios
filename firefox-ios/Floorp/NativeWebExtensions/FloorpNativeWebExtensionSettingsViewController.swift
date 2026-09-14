@@ -2164,6 +2164,19 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
 
     private(set) var webView: WKWebView
 
+    private lazy var closeButton: UIButton = {
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(systemName: "xmark")
+        configuration.baseForegroundColor = .label
+        let button = UIButton(configuration: configuration)
+        button.accessibilityLabel = FloorpStrings.WebExtensions.done
+        button.accessibilityIdentifier = "Floorp.NativeWebExtensions.ActionPopup.Close"
+        button.addTarget(self, action: #selector(didTapCloseButton), for: .touchUpInside)
+        return button
+    }()
+
+    private let popupToolbar = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+
     private let popupURL: URL
     private let configuration: WKWebViewConfiguration
     private let openURLInBrowser: (URL) -> Void
@@ -2234,6 +2247,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         view.accessibilityLabel = FloorpStrings.WebExtensions.genericExtensionName
 
         closeBridge.install(in: configuration)
+        installPopupToolbar()
         installWebView(webView)
         beginInitialLoadGeneration(replacingCurrentWebView: false)
     }
@@ -2262,9 +2276,31 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: view.topAnchor),
+            webView.topAnchor.constraint(equalTo: popupToolbar.bottomAnchor),
             webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    private func installPopupToolbar() {
+        popupToolbar.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(popupToolbar)
+        popupToolbar.contentView.addSubview(closeButton)
+        NSLayoutConstraint.activate([
+            popupToolbar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            popupToolbar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            popupToolbar.topAnchor.constraint(equalTo: view.topAnchor),
+            popupToolbar.heightAnchor.constraint(equalToConstant: 44),
+            closeButton.trailingAnchor.constraint(equalTo: popupToolbar.contentView.trailingAnchor, constant: -8),
+            closeButton.centerYAnchor.constraint(equalTo: popupToolbar.contentView.centerYAnchor),
+            closeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            closeButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+    }
+
+    @objc
+    private func didTapCloseButton() {
+        closePopup(animated: true)
     }
 
     private func beginInitialLoadGeneration(replacingCurrentWebView: Bool) {
@@ -2610,6 +2646,16 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
     }
 
 #if DEBUG || TESTING
+    var hasCloseButtonForTesting: Bool {
+        closeButton.superview === popupToolbar.contentView
+            && closeButton.accessibilityIdentifier
+                == "Floorp.NativeWebExtensions.ActionPopup.Close"
+    }
+
+    func tapCloseButtonForTesting() {
+        didTapCloseButton()
+    }
+
     var hasCommittedDocumentForTesting: Bool {
         hasCommittedDocument
     }
@@ -2757,7 +2803,7 @@ final class FloorpNativeWebExtensionActionPopupViewController: UIViewController,
             }
             preferredContentSize = CGSize(
                 width: min(max(CGFloat(truncating: dimensions[0]), 280), 420),
-                height: min(max(CGFloat(truncating: dimensions[1]), 240), 700)
+                height: min(max(CGFloat(truncating: dimensions[1]) + 44, 284), 700)
             )
         }
     }

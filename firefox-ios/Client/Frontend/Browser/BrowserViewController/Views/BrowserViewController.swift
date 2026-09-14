@@ -494,6 +494,7 @@ class BrowserViewController: UIViewController,
     // that we can obtain the originating `URLRequest` when a `URLResponse` is received. This will
     // allow us to re-trigger the `URLRequest` if the user requests a file to be downloaded.
     var pendingRequests = [ObjectIdentifier: [String: URLRequest]]()
+    var preparedExtensionNavigationReplays = [ObjectIdentifier: URLRequest]()
 
     // Each WebView owns its forced-download transaction. A controller-wide singleton lets an
     // unrelated tab or window overwrite the marker after the extension trust-boundary bypass

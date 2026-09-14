@@ -569,7 +569,34 @@ extension BrowserViewController: WKUIDelegate {
         clearPendingDownload(for: webView)
         let identifier = ObjectIdentifier(webView)
         pendingRequests.removeValue(forKey: identifier)
+        preparedExtensionNavigationReplays.removeValue(forKey: identifier)
         downloadHelpers.removeValue(forKey: identifier)
+    }
+
+    @MainActor
+    func canReplayAfterExtensionReadiness(_ request: URLRequest) -> Bool {
+        let method = request.httpMethod?.uppercased() ?? "GET"
+        return (method == "GET" || method == "HEAD")
+            && request.httpBody == nil
+            && request.httpBodyStream == nil
+    }
+
+    @MainActor
+    func takePreparedExtensionNavigationReplay(
+        _ request: URLRequest,
+        in webView: WKWebView
+    ) -> Bool {
+        let identifier = ObjectIdentifier(webView)
+        guard let prepared = preparedExtensionNavigationReplays[identifier] else {
+            return false
+        }
+        preparedExtensionNavigationReplays.removeValue(forKey: identifier)
+        // WebKit may normalize a request between `load(_:)` and the delegate
+        // callback. Match the one-shot replay by destination and method while
+        // retaining the bodyless GET/HEAD restriction applied before storage.
+        return prepared.url == request.url
+            && (prepared.httpMethod?.uppercased() ?? "GET")
+                == (request.httpMethod?.uppercased() ?? "GET")
     }
 
     @MainActor
@@ -727,7 +754,7 @@ extension BrowserViewController: WKNavigationDelegate {
     // This is the place where we decide what to do with a new navigation action. There are a number of special schemes
     // and http(s) urls that need to be handled in a different way. All the logic for that is inside this delegate
     // method.
-    // swiftlint:disable:next function_body_length
+    // swiftlint:disable function_body_length
     @MainActor
     func webView(
         _ webView: WKWebView,
@@ -791,7 +818,10 @@ extension BrowserViewController: WKNavigationDelegate {
         // that request automatically in the WKWebView returned by
         // `createWebViewWith`, so it must cross the blocker-readiness barrier
         // before popup creation too.
+        let isPreparedExtensionReplay = isTopLevelNavigation
+            && takePreparedExtensionNavigationReplay(navigationAction.request, in: webView)
         if isTopLevelNavigation,
+           !isPreparedExtensionReplay,
            !isPendingExtensionDownload,
            let host {
             let wasPrepared = host.consumePreparedNavigation(navigationAction)
@@ -805,10 +835,18 @@ extension BrowserViewController: WKNavigationDelegate {
                     decisionHandler: decisionHandler
                 )
             }
+            let shouldReplayAfterReadiness = canReplayAfterExtensionReadiness(
+                navigationAction.request
+            )
+            if shouldReplayAfterReadiness {
+                decisionHandler(.cancel)
+            }
             // swiftlint:disable:next closure_body_length
             Task { @MainActor [weak self, weak webView, weak tab, weak host] in
                 guard let webView, let tab, let host else {
-                    decisionHandler(.cancel)
+                    if !shouldReplayAfterReadiness {
+                        decisionHandler(.cancel)
+                    }
                     return
                 }
                 let didPrepare = await host.prepareBackgroundContent(
@@ -819,7 +857,9 @@ extension BrowserViewController: WKNavigationDelegate {
                 )
                 guard didPrepare else {
                     host.discardPreparedNavigation(navigationAction)
-                    decisionHandler(.cancel)
+                    if !shouldReplayAfterReadiness {
+                        decisionHandler(.cancel)
+                    }
                     guard !Task.isCancelled,
                           let self,
                           FloorpNativeWebExtensionHost.host(for: self.profile.localName()) === host,
@@ -843,10 +883,18 @@ extension BrowserViewController: WKNavigationDelegate {
                       self.tabManager[webView] === tab,
                       host.consumePreparedNavigation(navigationAction) else {
                     host.discardPreparedNavigation(navigationAction)
-                    decisionHandler(.cancel)
+                    if !shouldReplayAfterReadiness {
+                        decisionHandler(.cancel)
+                    }
                     return
                 }
                 self.dismissNavigationProtectionFailureAlert(for: tab, animated: false)
+                if shouldReplayAfterReadiness {
+                    self.preparedExtensionNavigationReplays[ObjectIdentifier(webView)]
+                        = navigationAction.request
+                    webView.load(navigationAction.request)
+                    return
+                }
                 // Consume the exact readiness token in this task and continue
                 // directly. Recursing through the delegate would treat a
                 // superseded token as a fresh request and could resurrect an
@@ -866,6 +914,7 @@ extension BrowserViewController: WKNavigationDelegate {
             decisionHandler: decisionHandler
         )
     }
+    // swiftlint:enable function_body_length
 
     @MainActor
     func presentNavigationProtectionFailure(
