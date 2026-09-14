@@ -6590,7 +6590,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "373893d34822aa687b50f3e7273d1612a8e4af2477942b4c7660fa5d594b571b"
+            "dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
@@ -7254,7 +7254,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertGreaterThanOrEqual((state["updateAttempts"] as? NSNumber)?.intValue ?? 0, 2)
         XCTAssertGreaterThanOrEqual((state["removeAttempts"] as? NSNumber)?.intValue ?? 0, 2)
         XCTAssertEqual((state["sentinelMutationCount"] as? NSNumber)?.intValue, 0)
-        XCTAssertEqual((state["permanentReconcileAttempts"] as? NSNumber)?.intValue, 3)
+        XCTAssertEqual((state["permanentReconcileAttempts"] as? NSNumber)?.intValue, 7)
         XCTAssertTrue(
             (state["permanentReconcileError"] as? String)?.contains("permanent register failure") == true
         )

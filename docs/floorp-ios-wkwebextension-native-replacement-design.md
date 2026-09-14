@@ -42,7 +42,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `373893d34822aa687b50f3e7273d1612a8e4af2477942b4c7660fa5d594b571b`、
+派生 SHA-256 は `dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -187,7 +187,7 @@ XCTest case 実測 164.060秒、278.192秒、252.510秒で全回合格（failed 
 既知の upstream WebKit 制約として検出し、通常の遮断機能とは別に扱う。
 
 2026-09-11 に、現行派生 ZIP
-`373893d34822aa687b50f3e7273d1612a8e4af2477942b4c7660fa5d594b571b` を iPhone 16 Pro / iOS 26.0
+`dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35` を iPhone 16 Pro / iOS 26.0
 （23A343）Simulator / WebKit bundle `8622.1.22.10.9` で検証した。private tab reload 後の
 document-idle で、保持済み CSS API と直後の css-user が同じ document identity lease を並行更新し、
 main document の identity が suspended のまま残り得る競合を決定的な Node 回帰試験で再現した。

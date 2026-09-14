@@ -7900,17 +7900,25 @@ index e0b8aae..638a326 100644
 @@ -26 +26 @@ import {
 -    localKeys, localRemove, localWrite,
 +    localKeys, localRemove, localSnapshot, localWrite,
-@@ -42,0 +43,106 @@ const resourceDetailPromises = new Map();
+@@ -42,0 +43,138 @@ const resourceDetailPromises = new Map();
 +const safariRegistrationSentinelId = 'floorp-safari-registration-sentinel';
++
++const canonicalPatternList = values => Array.from(new Set(
++    (Array.isArray(values) ? values : []).map(value => `${value}`)
++)).sort();
++
++const canonicalResourceList = values => (
++    Array.isArray(values) ? values : []
++).map(value => `${value}`.replace(/^\/+/, ''));
 +
 +const comparableRegistration = details => JSON.stringify({
 +    id: details.id,
-+    matches: details.matches || [],
-+    excludeMatches: details.excludeMatches || [],
-+    includeGlobs: details.includeGlobs || [],
-+    excludeGlobs: details.excludeGlobs || [],
-+    js: details.js || [],
-+    css: details.css || [],
++    matches: canonicalPatternList(details.matches),
++    excludeMatches: canonicalPatternList(details.excludeMatches),
++    includeGlobs: canonicalPatternList(details.includeGlobs),
++    excludeGlobs: canonicalPatternList(details.excludeGlobs),
++    js: canonicalResourceList(details.js),
++    css: canonicalResourceList(details.css),
 +    allFrames: details.allFrames === true,
 +    matchOriginAsFallback: details.matchOriginAsFallback === true,
 +    persistAcrossSessions: details.persistAcrossSessions !== false,
@@ -7932,7 +7940,7 @@ index e0b8aae..638a326 100644
 +// Safari scripting operations are not atomic: an API call can apply a prefix
 +// and still reject. Re-read and converge from the actual persistent state so a
 +// later attempt (including the next nonpersistent background wake) repairs it.
-+export async function reconcileSafariContentScripts(scripting, desired) {
++async function reconcileSafariContentScriptsNow(scripting, desired) {
 +    const sentinel = desired.find(
 +        details => details.id === safariRegistrationSentinelId
 +    );
@@ -7940,7 +7948,13 @@ index e0b8aae..638a326 100644
 +        throw new Error('Missing Safari registration sentinel definition');
 +    }
 +    let lastError;
-+    for ( let attempt = 1; attempt <= 3; attempt++ ) {
++    const retryDelays = [ 0, 50, 100, 250, 500, 1000, 2000 ];
++    for ( let attempt = 0; attempt < retryDelays.length; attempt++ ) {
++        if ( retryDelays[attempt] !== 0 ) {
++            await new Promise(resolve => {
++                setTimeout(resolve, retryDelays[attempt]);
++            });
++        }
 +        try {
 +            let before = await scripting.getRegisteredContentScripts();
 +            let currentSentinel = before.find(
@@ -7997,15 +8011,33 @@ index e0b8aae..638a326 100644
 +            return;
 +        } catch(reason) {
 +            lastError = reason;
-+            ubolErr(`reconcileSafariContentScripts/${attempt}/${reason}`);
-+            if ( attempt < 3 ) {
-+                await new Promise(resolve => {
-+                    setTimeout(resolve, 50 * attempt);
-+                });
++            ubolErr(`reconcileSafariContentScripts/${attempt + 1}/${reason}`);
++            // A Safari mutation can reject after applying all requested rows.
++            // Treat verified native state as success instead of repeating a
++            // registration which can then fail as a duplicate.
++            try {
++                const afterFailure =
++                    await scripting.getRegisteredContentScripts();
++                if ( registrationMismatch(afterFailure, desired) === false ) {
++                    return;
++                }
++            } catch {
++                // Preserve the mutation error; the next bounded attempt will
++                // obtain a fresh readback and repair from that exact state.
 +            }
 +        }
 +    }
 +    throw lastError;
++}
++
++export async function reconcileSafariContentScripts(scripting, desired) {
++    const previous = reconcileSafariContentScripts.pendingOp ||
++        Promise.resolve();
++    const operation = previous.catch(( ) => {}).then(( ) =>
++        reconcileSafariContentScriptsNow(scripting, desired)
++    );
++    reconcileSafariContentScripts.pendingOp = operation.catch(( ) => {});
++    return await operation;
 +}
 @@ -47,3 +153,6 @@ function getScriptletDetails() {
 -    promise = fetchJSON('/rulesets/scriptlet-details').then(
