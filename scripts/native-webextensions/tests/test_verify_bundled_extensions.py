@@ -221,18 +221,21 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
         ):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
-    def test_rejects_ubol_readiness_origin_guard_drift(self) -> None:
+    def test_rejects_ubol_readiness_sender_url_guard_drift(self) -> None:
         entry = self.rewrite_archive(
             "uBlock Origin Lite",
             lambda files: self.replace_archive_text(
                 files,
                 "js/background.js",
-                "sender?.origin?.toLowerCase() !== UBOL_ORIGIN",
-                "isTrustedOrigin(sender) === false",
+                "const senderURL = new URL(sender.url);",
+                "const senderURL = new URL(UBOL_ORIGIN);",
             ),
         )
 
-        with self.assertRaisesRegex(RuntimeError, "omits required compatibility code"):
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "trusted extension-page sender validation|omits required compatibility code",
+        ):
             VERIFIER.verify_archive(entry, self.bundle_root, self.root)
 
     def test_rejects_ubol_custom_filter_injection_after_initialization_gate(self) -> None:

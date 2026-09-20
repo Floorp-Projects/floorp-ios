@@ -15,7 +15,9 @@ Extensions picker underneath it.
 After leaving Floorp/Dark Reader idle for at least 35 seconds, navigate to a fresh
 HTTP(S) page and confirm that its first load is dark without a popup or reload.
 
-On iOS 26.0 or later, install uBlock Origin Lite. On non-sensitive test sites,
+On iOS 26.0 or later, especially a physical iPhone running iOS 27.0, install
+uBlock Origin Lite and confirm installation completes without a background-readiness
+error. On non-sensitive test sites,
 allow up to four minutes for its first install, cold restore, or re-enable while
 WebKit compiles the native ruleset. Subsequent first navigation in each normal/private
 context can wait up to 90 seconds and fails closed if readiness is not confirmed. Then

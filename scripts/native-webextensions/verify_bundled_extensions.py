@@ -162,7 +162,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "a0f414de9a4667ed86bc6d9303b7e56a0b49d3648fead3f167776cf958ac5089",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "65d90d4aeb20e4ec7108671e2d5dcbda3e7d92cb853cd2ba6e9b41c4b23a3b7a",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -193,7 +193,7 @@ EXPECTED = (
                     ],
                 },
                 {
-                    "description": "Make startup, wake, permission, administrator-policy, filtering-mode, static/derived/user DNR, imported-list, content-script, and user-script reconciliation durable and fail closed: use an immutable registered-content sentinel, case-normalize WebKit registration readback, and apply bounded ID-diff convergence; validate resources before mutation; use atomic or rollback-verified DNR updates; retain the first protected mutation error until a full recovery succeeds; serialize managed changes through the settings Web Lock and background queue, preserve changes arriving during awaits, retry idempotent native side effects even after their config value was saved, and defer persistent failures without a background wake loop; reconcile all protection surfaces and managed popup, badge, and strict-block side effects from durable state before ready; and request a crash-resumable visible extension-page foreground reconciliation when WebKit rejects static ruleset updates from an MV3 background page.",
+                    "description": "Make startup, wake, permission, administrator-policy, filtering-mode, static/derived/user DNR, imported-list, content-script, and user-script reconciliation durable and fail closed: use an immutable registered-content sentinel, case-normalize WebKit registration readback, and apply bounded ID-diff convergence; validate resources before mutation; use atomic or rollback-verified DNR updates; retain the first protected mutation error until a full recovery succeeds; serialize managed changes through the settings Web Lock and background queue, preserve changes arriving during awaits, retry idempotent native side effects even after their config value was saved, and defer persistent failures without a background wake loop; reconcile all protection surfaces and managed popup, badge, and strict-block side effects from durable state before ready; request a crash-resumable visible extension-page foreground reconciliation when WebKit rejects static ruleset updates from an MV3 background page; and trust Floorp lifecycle control messages only when their canonical sender origin and runtime ID match, or when WebKit supplies an exact runtime-owned sender URL origin, covering opaque or inconsistent physical-device sender metadata without accepting web-page or lookalike hosts.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/admin.js",
@@ -266,7 +266,7 @@ EXPECTED = (
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35",
+            "sha256": "9cd2e9f6c3d62ef6154dd4dd9f94a5ef70a7ec7386bd2f05c11e29126b3aa6d6",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
@@ -373,8 +373,11 @@ EXPECTED = (
                 "ubolErr(`onMessage/${request.what}/${error}`)",
                 "callback({ error })",
                 "request.what === 'floorpReadiness'",
-                "sender?.id !== runtime.id",
-                "sender?.origin?.toLowerCase() !== UBOL_ORIGIN",
+                "function isTrustedFloorpExtensionPageSender(sender)",
+                "sender?.id === runtime.id && senderOrigin === UBOL_ORIGIN",
+                "const senderURL = new URL(sender.url)",
+                "return senderURLOrigin === UBOL_ORIGIN",
+                "const trustedSender = isTrustedFloorpExtensionPageSender(sender)",
                 "await ensureFullyInitialized()",
                 "releaseRealmRulesetStartupGate",
                 "await isFullyInitialized",
@@ -2696,10 +2699,31 @@ def verify_ubol_settings_restore_guards(
         "foreground reconciliation authorization",
         authorization,
         (
-            "if ( sender?.id !== runtime.id ) { return false; }",
-            "if ( sender?.origin?.toLowerCase() !== UBOL_ORIGIN ) { return false; }",
+            "const trustedSender = isTrustedFloorpExtensionPageSender(sender);",
+            "if ( trustedSender === false ) { return false; }",
             "foregroundRulesetReconciliationRequired = true;",
             "return { authorized: true };",
+        ),
+    )
+
+    sender_validation = reviewed_section(
+        "js/background.js",
+        "function isTrustedFloorpExtensionPageSender(sender) {",
+        "async function reloadTab(tabId, url = '') {",
+        "trusted extension-page sender validation",
+    )
+    require_ordered(
+        "trusted extension-page sender validation",
+        sender_validation,
+        (
+            "typeof sender?.origin === 'string'",
+            "sender.origin.replace(/\\/$/, '').toLowerCase()",
+            "sender?.id === runtime.id && senderOrigin === UBOL_ORIGIN",
+            "typeof sender?.url !== 'string'",
+            "const senderURL = new URL(sender.url);",
+            "`${senderURL.protocol}//${senderURL.host}`.toLowerCase();",
+            "return senderURLOrigin === UBOL_ORIGIN;",
+            "return false;",
         ),
     )
 

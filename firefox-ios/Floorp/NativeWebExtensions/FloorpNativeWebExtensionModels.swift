@@ -116,6 +116,8 @@ enum FloorpNativeWebExtensionCatalog {
         "0b39067e4db2c1435230fb65a8a6a967435de0ab3d56171a9f9494a9fcd1e8b1"
     static let preIdleIdentityLeaseUBlockOriginLiteSHA256 =
         "53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359"
+    static let prePhysicalDeviceSenderFallbackUBlockOriginLiteSHA256 =
+        "dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35"
 
     static let darkReader = FloorpNativeWebExtensionCatalogItem(
         identifier: "floorp.bundled.darkreader",
@@ -152,7 +154,7 @@ enum FloorpNativeWebExtensionCatalog {
         identifier: "floorp.bundled.ublock-origin-lite",
         resourceName: "uBOLite-floorp-ios-2026.825.1619",
         resourceExtension: "zip",
-        expectedSHA256: "dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35",
+        expectedSHA256: "9cd2e9f6c3d62ef6154dd4dd9f94a5ef70a7ec7386bd2f05c11e29126b3aa6d6",
         expectedVersion: "2026.825.1619",
         contextIdentifier: "org.ublockorigin.lite.floorp-ios",
         baseURLScheme: "safari-web-extension",
@@ -232,7 +234,8 @@ enum FloorpNativeWebExtensionCatalog {
                     preTransactionHardeningUBlockOriginLiteSHA256,
                     preCSSInsertionAcknowledgementUBlockOriginLiteSHA256,
                     preDocumentScopedCSSUBlockOriginLiteSHA256,
-                    preIdleIdentityLeaseUBlockOriginLiteSHA256
+                    preIdleIdentityLeaseUBlockOriginLiteSHA256,
+                    prePhysicalDeviceSenderFallbackUBlockOriginLiteSHA256
                 ].contains(record.sha256)
             return isOfficialPackage || isPreviousFloorpPackage ? uBlockOriginLite : nil
         }

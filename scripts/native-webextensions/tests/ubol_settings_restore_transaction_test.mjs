@@ -34,6 +34,10 @@ const recoverySource = section(
     'let protectionRecoveryTail = Promise.resolve();',
     '\nasync function mutateFilteringModeAndScripts'
 );
+const trustedSenderSource = section(
+    'function isTrustedFloorpExtensionPageSender(sender) {',
+    '\n/' + '*'.repeat(78) + '/\n\nasync function reloadTab'
+);
 const onMessageSource = section(
     'const CUSTOM_FILTER_MESSAGE_SCHEMA = 1;',
     '\n/' + '*'.repeat(78) + '/\n\nfunction onCommand'
@@ -195,6 +199,7 @@ vm.runInContext(
         lockSource,
         transactionSource,
         recoverySource,
+        trustedSenderSource,
         onMessageSource,
         startupRecoverySource,
         dispatchSource,
