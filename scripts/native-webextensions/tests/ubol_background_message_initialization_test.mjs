@@ -9,12 +9,29 @@ if ( process.argv.length !== 3 ) {
 }
 
 const source = await readFile(process.argv[2], 'utf8');
+const trustedSenderStartMarker =
+    'function isTrustedFloorpExtensionPageSender(sender) {';
+const trustedSenderStart = source.indexOf(trustedSenderStartMarker);
+const trustedSenderEnd = source.indexOf(
+    '\n/' + '*'.repeat(78) + '/',
+    trustedSenderStart
+);
 const functionStartMarker = 'const CUSTOM_FILTER_MESSAGE_SCHEMA = 1;';
 const functionEndMarker = '\n/' + '*'.repeat(78) +
     '/\n\nfunction onCommand';
 const functionStart = source.indexOf(functionStartMarker);
 const functionEnd = source.indexOf(functionEndMarker, functionStart);
 
+assert.notEqual(
+    trustedSenderStart,
+    -1,
+    'background.js must define trusted extension-page sender validation'
+);
+assert.notEqual(
+    trustedSenderEnd,
+    -1,
+    'trusted extension-page sender validation must end before a section marker'
+);
 assert.notEqual(functionStart, -1, 'background.js must define onMessage');
 assert.notEqual(
     functionEnd,
@@ -22,6 +39,10 @@ assert.notEqual(
     'background.js must keep onMessage immediately before onCommand'
 );
 
+const trustedSenderSource = source.slice(
+    trustedSenderStart,
+    trustedSenderEnd
+);
 const onMessageSource = source.slice(functionStart, functionEnd);
 const never = new Promise(( ) => {});
 const customFilterResult = {
@@ -98,10 +119,47 @@ sandbox.self = sandbox;
 
 const context = vm.createContext(sandbox);
 vm.runInContext(
-    `${onMessageSource}\nself.floorpOnMessageUnderTest = onMessage;`,
+    `${trustedSenderSource}\n${onMessageSource}\n` +
+        'self.floorpTrustedSenderUnderTest = ' +
+        'isTrustedFloorpExtensionPageSender;\n' +
+        'self.floorpOnMessageUnderTest = onMessage;',
     context,
     { filename: 'js/background.js' }
 );
+
+assert.equal(sandbox.floorpTrustedSenderUnderTest({
+    id: 'ubol-test-extension',
+    origin: 'safari-web-extension://ubol-test-extension',
+}), true);
+assert.equal(sandbox.floorpTrustedSenderUnderTest({
+    id: 'ubol-test-extension',
+    origin: 'SAFARI-WEB-EXTENSION://UBOL-TEST-EXTENSION/',
+}), true);
+assert.equal(sandbox.floorpTrustedSenderUnderTest({
+    id: 'unexpected-webkit-runtime-id',
+    origin: 'null',
+    url: 'safari-web-extension://ubol-test-extension/noop.html?probe=1',
+}), true);
+assert.equal(sandbox.floorpTrustedSenderUnderTest({
+    id: 'ubol-test-extension',
+    url: 'safari-web-extension://ubol-test-extension/noop.html',
+}), true);
+assert.equal(sandbox.floorpTrustedSenderUnderTest({
+    id: 'ubol-test-extension',
+    origin: 'https://example.com',
+    url: 'https://example.com/',
+}), false);
+assert.equal(sandbox.floorpTrustedSenderUnderTest({
+    id: 'ubol-test-extension',
+    url: 'safari-web-extension://ubol-test-extension.evil/noop.html',
+}), false);
+assert.equal(sandbox.floorpTrustedSenderUnderTest({
+    id: 'unexpected-webkit-runtime-id',
+    origin: 'safari-web-extension://ubol-test-extension',
+}), false);
+assert.equal(sandbox.floorpTrustedSenderUnderTest({
+    id: 'ubol-test-extension',
+}), false);
 
 const sender = {
     tab: { id: 41 },
@@ -163,8 +221,9 @@ const authorization = await sandbox.floorpOnMessageUnderTest({
     what: 'floorpAuthorizeForegroundReconciliation',
     settingsRestoreId: 'restore-under-test',
 }, {
-    id: 'ubol-test-extension',
-    origin: 'safari-web-extension://ubol-test-extension',
+    id: 'unexpected-webkit-runtime-id',
+    origin: 'null',
+    url: 'safari-web-extension://ubol-test-extension/floorp-reconcile.html',
 });
 assert.deepEqual(structuredClone(authorization), { authorized: true });
 assert.equal(

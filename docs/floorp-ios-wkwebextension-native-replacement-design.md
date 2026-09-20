@@ -42,7 +42,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35`、
+派生 SHA-256 は `9cd2e9f6c3d62ef6154dd4dd9f94a5ef70a7ec7386bd2f05c11e29126b3aa6d6`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -109,6 +109,12 @@ Safari の local/session storage を領域別に直列化し、WebKit の unknow
 する。Safari local storage は最初の read より前に内部 sentinel を書いて DB を作成し、その行を
 保持する。sentinel は uBO のキー列挙から除外する。read failure は空データとして扱わず、最終失敗を
 readiness へ伝播する。
+
+Floorp の readiness／foreground reconciliation 制御 message は、送信元の runtime ID と
+canonical origin が一致する場合に加え、実機 WebKit が opaque または不整合な sender metadata を
+返す場合に限り、WebKit が付与した `sender.url` の scheme と host が `runtime.getURL("")` と
+完全一致することを代替証明として受け入れる。通常の web page、host prefix が似ている URL、
+送信元 URL がない message は fail closed のまま拒否する。
 
 Safari の dynamic/session DNR DB にも、実在しない `floorp.invalid` URL だけを対象とする inert な
 keeper rule を各1件保持する。予約 ID `7,000,000` は通常 rule（5M 未満）、trusted directive
@@ -186,12 +192,12 @@ XCTest case 実測 164.060秒、278.192秒、252.510秒で全回合格（failed 
 234.598秒、0失敗で合格した。公式 Safari build が無効化している strict-block interstitial は
 既知の upstream WebKit 制約として検出し、通常の遮断機能とは別に扱う。
 
-2026-09-11 に、現行派生 ZIP
+2026-09-11 に、今回の実機 sender 修正前の派生 ZIP
 `dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35` を iPhone 16 Pro / iOS 26.0
 （23A343）Simulator / WebKit bundle `8622.1.22.10.9` で検証した。private tab reload 後の
 document-idle で、保持済み CSS API と直後の css-user が同じ document identity lease を並行更新し、
 main document の identity が suspended のまま残り得る競合を決定的な Node 回帰試験で再現した。
-旧 ZIP `53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359` が失敗し、現行 ZIP が
+旧 ZIP `53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359` が失敗し、当時の修正済み ZIP が
 合格することを確認した後、同じ新規 build 製品で `testOfficialUBOLReleaseAcceptanceGates` を
 3回連続実行し、XCTest case 実測160.132秒、156.476秒、156.260秒で全回合格
 （failed / skipped とも0）させた。この run は main／srcdoc の plain・form-control・procedural
@@ -201,7 +207,8 @@ uBOL が unavailable のままになる条件は OS matrix CI の release gate �
 
 `0b39067e4db2c1435230fb65a8a6a967435de0ab3d56171a9f9494a9fcd1e8b1` は document-scoped
 CSS の最終 WebKit 修正より前の TestFlight package、`53ce54c38cafcf5afbfb91da3a27165447a16325fdef21597c770aacd57b5359`
-は今回の修正直前に Floorp が生成した package として移行専用 allowlist に残す。新規 install と
+は identity-lease 修正前、`dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35`
+は実機 sender URL fallback 修正前の package として移行専用 allowlist に残す。新規 install と
 release acceptance は上記の現行派生 SHA-256 だけを受け入れる。
 
 補助的な過去回帰証拠として、2026-09-08 の iPhone 17 / iOS 26.2 Simulator build では

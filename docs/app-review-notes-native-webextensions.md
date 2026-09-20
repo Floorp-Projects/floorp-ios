@@ -61,7 +61,7 @@ Bundled open-source components:
   Legacy full stores remain readable; failed updates never auto-delete user rules. UI failures remain retryable.
   Upstream: https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip
   Upstream SHA-256: 89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94
-  Derived SHA-256: dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35
+  Derived SHA-256: 9cd2e9f6c3d62ef6154dd4dd9f94a5ef70a7ec7386bd2f05c11e29126b3aa6d6
   Patch: firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch
   Build: scripts/package-ubol-ios.sh
   Source commit: 080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b
@@ -103,7 +103,9 @@ Extensions picker underneath it.
 After leaving Floorp/Dark Reader idle for at least 35 seconds, navigate to a fresh
 HTTP(S) page and confirm that its first load is dark without a popup or reload.
 
-On iOS 26.0 or later, install uBlock Origin Lite. On non-sensitive test sites,
+On iOS 26.0 or later, especially a physical iPhone running iOS 27.0, install
+uBlock Origin Lite and confirm installation completes without a background-readiness
+error. On non-sensitive test sites,
 allow up to four minutes for its first install, cold restore, or re-enable while
 WebKit compiles the native ruleset. Subsequent first navigation in each normal/private
 context can wait up to 90 seconds and fails closed if readiness is not confirmed. Then
@@ -141,7 +143,7 @@ Reader Mode, tracking protection, Notes, or Notes Sync.
 | Extension | Catalog identifier | Version | SHA-256 | Source commit | License | Package policy | Minimum |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability, close-tracked acknowledged popup routing, and unsupported shortcut UI removal; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
-| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `dc4b30d682c10655dc95e04d5a04673db9dd895bcc287362782893d10cd46b35` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe close-tracked acknowledged popup routing, serialized storage, combined/per-store-capacity-reserved hidden Safari dynamic/session DNR keepers with non-destructive legacy migration, durable serialized DNR/script reconciliation with delayed-readback convergence, random document-root-scoped custom cosmetic/procedural reinjection over WebKit all-frame native CSS with canary-backed acknowledgements and bounded 15-second retry windows, direct/inherited same-registration procedural API preload, transport-fallback bounded custom-filter snapshots, queue-time document-idle/dynamic recovery, dynamic-preflight-free origin-fallback replies, uncommitted-only document-idle replay, and event-bounded BFCache recovery across cross-host/normal/private/origin-fallback navigation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
+| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `9cd2e9f6c3d62ef6154dd4dd9f94a5ef70a7ec7386bd2f05c11e29126b3aa6d6` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe close-tracked acknowledged popup routing, serialized storage, combined/per-store-capacity-reserved hidden Safari dynamic/session DNR keepers with non-destructive legacy migration, durable serialized DNR/script reconciliation with delayed-readback convergence, exact-runtime-URL fallback for WebKit lifecycle sender validation, random document-root-scoped custom cosmetic/procedural reinjection over WebKit all-frame native CSS with canary-backed acknowledgements and bounded 15-second retry windows, direct/inherited same-registration procedural API preload, transport-fallback bounded custom-filter snapshots, queue-time document-idle/dynamic recovery, dynamic-preflight-free origin-fallback replies, uncommitted-only document-idle replay, and event-bounded BFCache recovery across cross-host/normal/private/origin-fallback navigation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
 
 The canonical local evidence is:
 
