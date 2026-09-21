@@ -45,7 +45,7 @@ final class UserAgentBuilderTests: XCTestCase {
         let device = UIDevice.current.model
         let system = device == "iPad" ? "CPU" : "CPU iPhone"
         let systemInfo = "(\(device); \(system) OS 18_7 like Mac OS X)"
-        let extensions = "FxiOS/\(AppInfo.appVersion) \(UserAgent.uaBitMobile) \(UserAgent.uaBitSafari)"
+        let extensions = "FxiOS/\(AppInfo.userAgentVersion) \(UserAgent.uaBitMobile) \(UserAgent.uaBitSafari)"
         let testAgent = "\(UserAgent.product) \(systemInfo) \(UserAgent.platform) \(UserAgent.platformDetails) \(extensions)"
         XCTAssertEqual(builder.userAgent(), testAgent)
     }

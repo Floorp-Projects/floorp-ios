@@ -93,6 +93,8 @@
 	<string>$(FLOORP_APP_GROUP_IDENTIFIER)</string>
 	<key>MozInternalURLScheme</key>
 	<string>$(MOZ_INTERNAL_URL_SCHEME)</string>
+	<key>MozUserAgentVersion</key>
+	<string>$(MOZ_USER_AGENT_VERSION)</string>
 	<key>MozAllowHostedSummarizer</key>
 	<string>$(MOZ_ALLOW_HOSTED_SUMMARIZER)</string>
 	<key>MozAllowQuickAnswers</key>

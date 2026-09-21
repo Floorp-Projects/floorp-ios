@@ -61,21 +61,25 @@ class SceneDelegate: UIResponder,
         let sceneCoordinator = SceneCoordinator(scene: scene, introManager: introScreenManager)
         self.sceneCoordinator = sceneCoordinator
         self.window = sceneCoordinator.window
+        startScene(sceneCoordinator)
+        handle(connectionOptions: connectionOptions)
+        if !sessionManager.launchSessionProvider.openedFromExternalSource {
+            shareTelemetry.cancelOpenURLTimeRecord()
+        }
         Task { @MainActor [weak self, sceneCoordinator] in
             guard let self else { return }
             await FloorpBootstrapper.waitForWebExtensionRuntime(for: self.profile)
             guard self.sceneCoordinator === sceneCoordinator else { return }
             self.logger.log(
-                "SceneDelegate: native WebExtension startup completed; starting scene",
+                "SceneDelegate: native WebExtension startup completed after scene start",
                 level: .info,
                 category: .lifecycle
             )
-            sceneCoordinator.start()
-            self.handle(connectionOptions: connectionOptions)
-            if !self.sessionManager.launchSessionProvider.openedFromExternalSource {
-                self.shareTelemetry.cancelOpenURLTimeRecord()
-            }
         }
+    }
+
+    func startScene(_ sceneCoordinator: SceneCoordinator) {
+        sceneCoordinator.start()
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {

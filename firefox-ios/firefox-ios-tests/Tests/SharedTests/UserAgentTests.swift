@@ -3,6 +3,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import XCTest
+import Common
 @testable import Shared
 
 final class UserAgentTests: XCTestCase {
@@ -40,14 +41,14 @@ final class UserAgentTests: XCTestCase {
         let ua = UserAgent.getUserAgent(domain: "www.google.com", platform: .Desktop)
 
         XCTAssertEqual(ua, CustomUserAgentConstant.googleDesktopUserAgent)
-        XCTAssertTrue(ua.contains("FxiOS/"))
+        XCTAssertTrue(ua.contains("FxiOS/\(AppInfo.userAgentVersion)"))
     }
 
     func testGetUserAgentDesktop_withGoogleCcTLD_returnsGoogleDesktopUserAgent() {
         let ua = UserAgent.getUserAgent(domain: "google.co.uk", platform: .Desktop)
 
         XCTAssertEqual(ua, CustomUserAgentConstant.googleDesktopUserAgent)
-        XCTAssertTrue(ua.contains("FxiOS/"))
+        XCTAssertTrue(ua.contains("FxiOS/\(AppInfo.userAgentVersion)"))
     }
 
     func testGetUserAgentMobile_withGoogleDomain_returnsDefaultMobileUserAgent() {

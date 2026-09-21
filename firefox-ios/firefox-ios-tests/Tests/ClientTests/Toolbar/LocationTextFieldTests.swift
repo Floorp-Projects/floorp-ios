@@ -7,7 +7,9 @@ import XCTest
 
 @MainActor
 final class LocationTextFieldTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var textField: LocationTextField!
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var themeManager: MockThemeManager!
 
     override func setUp() async throws {
@@ -39,6 +41,24 @@ final class LocationTextFieldTests: XCTestCase {
 
         XCTAssertTrue(textField.text?.contains("www.wiki") ?? false)
         XCTAssertNotNil(textField.markedTextRange)
+    }
+
+    func testHandleInputModeDidChange_withJapaneseInput_removesInlineAutocomplete() {
+        textField.text = "www.wiki"
+        textField.setMarkedText("pedia.com", selectedRange: NSRange())
+
+        textField.handleInputModeDidChange(primaryLanguage: "ja-JP")
+
+        XCTAssertEqual(textField.text, "www.wiki")
+        XCTAssertNil(textField.markedTextRange)
+    }
+
+    func testSupportsInlineAutocomplete_disablesCompositionSensitiveLanguages() {
+        XCTAssertFalse(LocationTextField.supportsInlineAutocomplete(primaryLanguage: "ja-JP"))
+        XCTAssertFalse(LocationTextField.supportsInlineAutocomplete(primaryLanguage: "zh-Hans"))
+        XCTAssertFalse(LocationTextField.supportsInlineAutocomplete(primaryLanguage: "ko-KR"))
+        XCTAssertTrue(LocationTextField.supportsInlineAutocomplete(primaryLanguage: "en-US"))
+        XCTAssertTrue(LocationTextField.supportsInlineAutocomplete(primaryLanguage: nil))
     }
 
     func testApplyTheme_refreshesMarkedText() {

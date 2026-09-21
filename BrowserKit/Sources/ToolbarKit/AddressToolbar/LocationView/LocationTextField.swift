@@ -171,7 +171,11 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
     func setAutocompleteSuggestion(_ suggestion: String?) {
         let searchText = text ?? ""
 
-        guard let suggestion = suggestion, isEditing && markedTextRange == nil else {
+        guard let suggestion = suggestion,
+              isEditing,
+              markedTextRange == nil,
+              Self.supportsInlineAutocomplete(primaryLanguage: textInputMode?.primaryLanguage)
+        else {
             hideCursor = false
             return
         }
@@ -187,9 +191,26 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
         hideCursor = true
     }
 
+    static func supportsInlineAutocomplete(primaryLanguage: String?) -> Bool {
+        guard let primaryLanguage else { return true }
+        let language = primaryLanguage.lowercased()
+        return !["ja", "zh", "ko"].contains {
+            language == $0 || language.hasPrefix("\($0)-") || language.hasPrefix("\($0)_")
+        }
+    }
+
     func handleInputModeDidChange() {
+        handleInputModeDidChange(primaryLanguage: textInputMode?.primaryLanguage)
+    }
+
+    func handleInputModeDidChange(primaryLanguage: String?) {
         guard !lastMarkedText.isEmpty, let currentText = self.text else { return }
         self.text = currentText.replacingOccurrences(of: lastMarkedText, with: "")
+        guard Self.supportsInlineAutocomplete(primaryLanguage: primaryLanguage) else {
+            lastMarkedText = ""
+            hideCursor = false
+            return
+        }
         hideCursor = true
         setMarkedText(lastMarkedText, selectedRange: NSRange())
     }

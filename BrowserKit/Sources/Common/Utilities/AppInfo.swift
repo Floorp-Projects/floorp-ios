@@ -33,6 +33,14 @@ open class AppInfo {
         return appVersion
     }
 
+    public static var userAgentVersion: String {
+        guard let version = applicationBundle.object(forInfoDictionaryKey: "MozUserAgentVersion") as? String,
+              !version.isEmpty else {
+            return appVersion
+        }
+        return version
+    }
+
     public static var buildNumber: String {
         guard let buildNumber = applicationBundle.object(forInfoDictionaryKey: String(kCFBundleVersionKey)) as? String else {
             fatalError("kCFBundleVersionKey not found in info.plist")

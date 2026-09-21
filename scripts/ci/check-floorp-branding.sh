@@ -389,6 +389,7 @@ APP_NAME_FILE="BrowserKit/Sources/Shared/AppName.swift"
 PROJECT_FILE="firefox-ios/Client.xcodeproj/project.pbxproj"
 FLOORP_SCHEME_FILE="firefox-ios/Client.xcodeproj/xcshareddata/xcschemes/Floorp.xcscheme"
 RELEASE_CONFIG="firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
+VERSION_CONFIG="firefox-ios/Client/Configuration/version.xcconfig"
 RELEASE_PLIST="firefox-ios/Client/FloorpReleaseInfo.plist"
 RELEASE_ENTITLEMENTS="firefox-ios/Client/Entitlements/FloorpReleaseApplication.entitlements"
 CI_PRE_XCODEBUILD="firefox-ios/ci_scripts/ci_pre_xcodebuild.sh"
@@ -918,6 +919,12 @@ require_fixed "$RELEASE_CONFIG" "MOZ_BUNDLE_ID" "Inherited MOZ_* build-setting c
 require_fixed "$RELEASE_PLIST" "MozSharedContainerIdentifier" "MozSharedContainerIdentifier runtime key is retained"
 require_fixed "$RELEASE_PLIST" "MozPublicURLScheme" "MozPublicURLScheme runtime key is retained"
 require_fixed "$RELEASE_PLIST" "MozInternalURLScheme" "MozInternalURLScheme runtime key is retained"
+require_fixed "$VERSION_CONFIG" "MOZ_USER_AGENT_VERSION = " "Web compatibility version is independent from Floorp marketing version"
+require_plist_string_value \
+    "$RELEASE_PLIST" \
+    "MozUserAgentVersion" \
+    '$(MOZ_USER_AGENT_VERSION)' \
+    "FloorpRelease embeds the web compatibility version"
 
 RELEASE_IDENTITY_FILES=(
     "$RELEASE_CONFIG"
