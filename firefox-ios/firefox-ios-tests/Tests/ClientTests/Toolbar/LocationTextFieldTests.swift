@@ -35,7 +35,7 @@ final class LocationTextFieldTests: XCTestCase {
 
     func testHandleInputModeDidChange_withLastMarkedText_updatesTextAndSetsMarkedText() {
         textField.text = "www.wiki"
-        textField.setMarkedText("pedia.com", selectedRange: NSRange())
+        textField.setInlineAutocompleteMarkedText("pedia.com")
 
         textField.handleInputModeDidChange()
 
@@ -45,12 +45,23 @@ final class LocationTextFieldTests: XCTestCase {
 
     func testHandleInputModeDidChange_withJapaneseInput_removesInlineAutocomplete() {
         textField.text = "www.wiki"
-        textField.setMarkedText("pedia.com", selectedRange: NSRange())
+        textField.setInlineAutocompleteMarkedText("pedia.com")
 
         textField.handleInputModeDidChange(primaryLanguage: "ja-JP")
 
         XCTAssertEqual(textField.text, "www.wiki")
         XCTAssertNil(textField.markedTextRange)
+    }
+
+    func testHandleInputModeDidChange_withRealIMEComposition_preservesMarkedText() {
+        textField.text = "nihon"
+        textField.setMarkedText("日本", selectedRange: NSRange(location: 2, length: 0))
+        let composedText = textField.text
+
+        textField.handleInputModeDidChange(primaryLanguage: "ja-JP")
+
+        XCTAssertEqual(textField.text, composedText)
+        XCTAssertNotNil(textField.markedTextRange)
     }
 
     func testSupportsInlineAutocomplete_disablesCompositionSensitiveLanguages() {
@@ -77,5 +88,17 @@ final class LocationTextFieldTests: XCTestCase {
         XCTAssertNotNil(textField.markedTextRange, "Marked text should still exist after theme change.")
 
         XCTAssertEqual(textField.text, "github.com")
+    }
+
+    func testApplyTheme_preservesInlineAutocompleteOwnership() {
+        textField.text = "github"
+        textField.setInlineAutocompleteMarkedText(".com")
+
+        themeManager.setManualTheme(to: .dark)
+        textField.applyTheme(theme: themeManager.getCurrentTheme(for: .XCTestDefaultUUID))
+        textField.handleInputModeDidChange(primaryLanguage: "ja-JP")
+
+        XCTAssertEqual(textField.text, "github")
+        XCTAssertNil(textField.markedTextRange)
     }
 }

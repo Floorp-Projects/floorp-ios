@@ -58,7 +58,14 @@ class SceneDelegate: UIResponder,
             prefs: profile.prefs
         )
 
-        let sceneCoordinator = SceneCoordinator(scene: scene, introManager: introScreenManager)
+        let profile = self.profile
+        let sceneCoordinator = SceneCoordinator(
+            scene: scene,
+            introManager: introScreenManager,
+            browserLaunchBarrier: {
+                await FloorpBootstrapper.waitForDeferredWebExtensionHost(for: profile)
+            }
+        )
         self.sceneCoordinator = sceneCoordinator
         self.window = sceneCoordinator.window
         startScene(sceneCoordinator)

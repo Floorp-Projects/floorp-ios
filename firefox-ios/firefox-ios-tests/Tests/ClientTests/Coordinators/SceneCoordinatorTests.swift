@@ -73,6 +73,29 @@ final class SceneCoordinatorTests: XCTestCase {
         XCTAssertNotNil(subject.childCoordinators.first as? BrowserCoordinator)
     }
 
+    func testLaunchBrowser_waitsForBrowserLaunchBarrier() async {
+        var releaseBarrier: CheckedContinuation<Void, Never>?
+        let barrierStarted = expectation(description: "Browser launch barrier started")
+        let subject = createSubject(browserLaunchBarrier: {
+            barrierStarted.fulfill()
+            await withCheckedContinuation { releaseBarrier = $0 }
+        })
+
+        subject.launchBrowser()
+        subject.launchBrowser()
+        await fulfillment(of: [barrierStarted], timeout: 1)
+
+        XCTAssertTrue(subject.childCoordinators.isEmpty)
+
+        releaseBarrier?.resume()
+        for _ in 0..<10 where subject.childCoordinators.isEmpty {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(subject.childCoordinators.count, 1)
+        XCTAssertNotNil(subject.childCoordinators.first as? BrowserCoordinator)
+    }
+
     func testChildLaunchCoordinatorIsDone_startsBrowser() throws {
         let subject = createSubject()
         subject.launchWith(launchType: .intro(manager: IntroScreenManager(prefs: MockProfile().prefs)))
@@ -156,10 +179,15 @@ final class SceneCoordinatorTests: XCTestCase {
     }
 
     // MARK: - Helpers
-    private func createSubject(file: StaticString = #filePath,
+    private func createSubject(browserLaunchBarrier: (@MainActor () async -> Void)? = nil,
+                               file: StaticString = #filePath,
                                line: UInt = #line) -> SceneCoordinator {
         let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
-        let subject = SceneCoordinator(scene: scene!, introManager: MockIntroScreenManager(isModernEnabled: false))
+        let subject = SceneCoordinator(
+            scene: scene!,
+            introManager: MockIntroScreenManager(isModernEnabled: false),
+            browserLaunchBarrier: browserLaunchBarrier
+        )
         // Replace created router from scene with a mock router so we don't trigger real navigation in our tests
         subject.router = mockRouter
         trackForMemoryLeaks(subject, file: file, line: line)
