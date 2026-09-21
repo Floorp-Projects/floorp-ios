@@ -18,7 +18,7 @@
     "page-metadata-parser": "1.1.4"
   },
   "devDependencies": {
-    "@babel/core": "^7.28.6",
+    "@babel/core": "^8.0.1",
     "@babel/preset-env": "7.28.6",
     "babel-loader": "^8.4.1",
     "glob": "^13.0.6",
