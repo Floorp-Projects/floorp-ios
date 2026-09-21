@@ -715,6 +715,13 @@ final class FloorpNativeWebExtensionHost: NSObject {
         fileprivate let topologyGeneration: Int
     }
 
+    private struct DeferredNewTabRequest {
+        let contextIdentifier: String
+        let extensionContext: WKWebExtensionContext
+        let configuration: WKWebExtension.TabConfiguration
+        let completionHandler: ((any WKWebExtensionTab)?, (any Error)?) -> Void
+    }
+
     private static let processLifecycleIdentifier = UUID()
     private static var hosts = [String: FloorpNativeWebExtensionHost]()
     // WebKit 26.5 can crash while destroying a process pool after a loaded
@@ -824,6 +831,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
     private var extensionTabSurfaceCloseRequests = [
         ObjectIdentifier: ExtensionTabSurfaceCloseRequest
     ]()
+    private var deferredNewTabRequests = [String: [DeferredNewTabRequest]]()
     private var actionFocusGeneration = 0
     private var extensionTopologyGeneration = 0
     private var lifecycleGeneration = 0
@@ -2374,6 +2382,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
                     identifier: identifier
                 )
             }
+            completeDeferredNewTabRequests(for: identifier)
         } catch {
             let installationError = error
             setContextReady(false, identifier: identifier)
@@ -2754,6 +2763,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
             replaceRecord(record)
             try persistRegistry()
             reloadForNewlyAvailableExtension(in: affectedTabs)
+            completeDeferredNewTabRequests(for: identifier)
         } catch {
             let operationError = error
             setContextReady(false, identifier: identifier)
@@ -5034,6 +5044,10 @@ final class FloorpNativeWebExtensionHost: NSObject {
 
     private func setContextReady(_ isReady: Bool, identifier: String) {
         if !isReady {
+            failDeferredNewTabRequests(
+                for: identifier,
+                error: FloorpNativeWebExtensionError.hostUnavailable
+            )
             extensionTabSurfaceCloseRequests.values
                 .filter { $0.identifier == identifier }
                 .forEach {
@@ -5961,6 +5975,7 @@ final class FloorpNativeWebExtensionHost: NSObject {
         }
         readyContextIdentifiers.removeAll()
         quarantinedContextIdentifiers.removeAll()
+        failAllDeferredNewTabRequests(error: CancellationError())
         actionOrigins.removeAll()
         preparedNavigationActions.removeAll()
         navigationPreparationGenerations.removeAll()
@@ -6740,7 +6755,29 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
         for extensionContext: WKWebExtensionContext,
         completionHandler: @escaping ((any WKWebExtensionTab)?, (any Error)?) -> Void
     ) {
+        openNewTab(
+            using: configuration,
+            for: extensionContext,
+            allowsReadinessDeferral: true,
+            completionHandler: completionHandler
+        )
+    }
+
+    private func openNewTab(
+        using configuration: WKWebExtension.TabConfiguration,
+        for extensionContext: WKWebExtensionContext,
+        allowsReadinessDeferral: Bool,
+        completionHandler: @escaping ((any WKWebExtensionTab)?, (any Error)?) -> Void
+    ) {
         guard let identifier = currentReadyIdentifier(for: extensionContext) else {
+            if allowsReadinessDeferral,
+               deferNewTabUntilContextIsReady(
+                   using: configuration,
+                   for: extensionContext,
+                   completionHandler: completionHandler
+               ) {
+                return
+            }
             completionHandler(nil, FloorpNativeWebExtensionError.hostUnavailable)
             return
         }
@@ -6785,6 +6822,56 @@ extension FloorpNativeWebExtensionHost: WKWebExtensionControllerDelegate {
             popupToken: popupToken,
             finish: finish
         )
+    }
+
+    private func deferNewTabUntilContextIsReady(
+        using configuration: WKWebExtension.TabConfiguration,
+        for extensionContext: WKWebExtensionContext,
+        completionHandler: @escaping ((any WKWebExtensionTab)?, (any Error)?) -> Void
+    ) -> Bool {
+        guard let identifier = currentLifecycleIdentifier(for: extensionContext),
+              activeTransitions.contains(identifier),
+              registry.extensions.first(where: { $0.id == identifier })?.transactionState
+                == .switching else {
+            return false
+        }
+        deferredNewTabRequests[identifier, default: []].append(DeferredNewTabRequest(
+            contextIdentifier: identifier,
+            extensionContext: extensionContext,
+            configuration: configuration,
+            completionHandler: completionHandler
+        ))
+        return true
+    }
+
+    private func completeDeferredNewTabRequests(for identifier: String) {
+        let requests = deferredNewTabRequests.removeValue(forKey: identifier) ?? []
+        for request in requests {
+            guard request.contextIdentifier == identifier else {
+                request.completionHandler(nil, FloorpNativeWebExtensionError.hostUnavailable)
+                continue
+            }
+            openNewTab(
+                using: request.configuration,
+                for: request.extensionContext,
+                allowsReadinessDeferral: false,
+                completionHandler: request.completionHandler
+            )
+        }
+    }
+
+    private func failDeferredNewTabRequests(
+        for identifier: String,
+        error: any Error
+    ) {
+        let requests = deferredNewTabRequests.removeValue(forKey: identifier) ?? []
+        requests.forEach { $0.completionHandler(nil, error) }
+    }
+
+    private func failAllDeferredNewTabRequests(error: any Error) {
+        let requests = deferredNewTabRequests.values.flatMap { $0 }
+        deferredNewTabRequests.removeAll()
+        requests.forEach { $0.completionHandler(nil, error) }
     }
 
     func webExtensionController(

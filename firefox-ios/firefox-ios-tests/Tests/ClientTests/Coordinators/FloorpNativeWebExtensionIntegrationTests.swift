@@ -9097,6 +9097,17 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             context.errors.isEmpty,
             context.errors.map(\.localizedDescription).joined(separator: "\n")
         )
+        var welcomeURL: URL?
+        for _ in 0..<120 {
+            welcomeURL = manager.extensionCreatedTabs.last.flatMap { $0.webView?.url ?? $0.url }
+            if welcomeURL?.host == "darkreader.org" { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(
+            welcomeURL?.host,
+            "darkreader.org",
+            "The install-time welcome tab must wait for host readiness instead of being rejected"
+        )
         manager.selectedTab = source
 
         try await host.installBundledExtension(
