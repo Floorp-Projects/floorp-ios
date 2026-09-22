@@ -8,6 +8,7 @@ import Common
 
 @MainActor
 final class SceneCoordinatorTests: XCTestCase {
+    // swiftlint:disable:next implicitly_unwrapped_optional
     private var mockRouter: MockRouter!
 
     override func setUp() async throws {
