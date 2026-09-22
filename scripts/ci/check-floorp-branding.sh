@@ -280,6 +280,65 @@ require_fixed() {
     fi
 }
 
+xcconfig_literal_value() {
+    local file="$1"
+    local key="$2"
+
+    awk -v expected_key="$key" '
+        {
+            separator = index($0, "=")
+            if (separator == 0) {
+                next
+            }
+
+            candidate_key = substr($0, 1, separator - 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", candidate_key)
+            if (candidate_key != expected_key) {
+                next
+            }
+
+            candidate_value = substr($0, separator + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", candidate_value)
+            matches += 1
+            value = candidate_value
+        }
+        END {
+            if (matches != 1 || value == "") {
+                exit 1
+            }
+            print value
+        }
+    ' "$file"
+}
+
+require_matching_xcconfig_literals() {
+    local file="$1"
+    local left_key="$2"
+    local right_key="$3"
+    local description="$4"
+    local left_value
+    local right_value
+
+    if ! require_file "$file"; then
+        return
+    fi
+
+    if ! left_value="$(xcconfig_literal_value "$file" "$left_key")"; then
+        fail "$description ($left_key must have exactly one non-empty literal value in $file)"
+        return
+    fi
+    if ! right_value="$(xcconfig_literal_value "$file" "$right_key")"; then
+        fail "$description ($right_key must have exactly one non-empty literal value in $file)"
+        return
+    fi
+
+    if [[ "$left_value" == "$right_value" ]]; then
+        pass "$description"
+    else
+        fail "$description ($left_key is $left_value, but $right_key is $right_value in $file)"
+    fi
+}
+
 forbid_fixed_in_files() {
     local forbidden="$1"
     local description="$2"
@@ -389,6 +448,7 @@ APP_NAME_FILE="BrowserKit/Sources/Shared/AppName.swift"
 PROJECT_FILE="firefox-ios/Client.xcodeproj/project.pbxproj"
 FLOORP_SCHEME_FILE="firefox-ios/Client.xcodeproj/xcshareddata/xcschemes/Floorp.xcscheme"
 RELEASE_CONFIG="firefox-ios/Client/Configuration/FloorpRelease.xcconfig"
+VERSION_CONFIG="firefox-ios/Client/Configuration/version.xcconfig"
 RELEASE_PLIST="firefox-ios/Client/FloorpReleaseInfo.plist"
 RELEASE_ENTITLEMENTS="firefox-ios/Client/Entitlements/FloorpReleaseApplication.entitlements"
 CI_PRE_XCODEBUILD="firefox-ios/ci_scripts/ci_pre_xcodebuild.sh"
@@ -918,6 +978,16 @@ require_fixed "$RELEASE_CONFIG" "MOZ_BUNDLE_ID" "Inherited MOZ_* build-setting c
 require_fixed "$RELEASE_PLIST" "MozSharedContainerIdentifier" "MozSharedContainerIdentifier runtime key is retained"
 require_fixed "$RELEASE_PLIST" "MozPublicURLScheme" "MozPublicURLScheme runtime key is retained"
 require_fixed "$RELEASE_PLIST" "MozInternalURLScheme" "MozInternalURLScheme runtime key is retained"
+require_matching_xcconfig_literals \
+    "$VERSION_CONFIG" \
+    "APP_VERSION" \
+    "MOZ_USER_AGENT_VERSION" \
+    "Web compatibility version remains aligned with the canonical Firefox version"
+require_plist_string_value \
+    "$RELEASE_PLIST" \
+    "MozUserAgentVersion" \
+    '$(MOZ_USER_AGENT_VERSION)' \
+    "FloorpRelease embeds the web compatibility version"
 
 RELEASE_IDENTITY_FILES=(
     "$RELEASE_CONFIG"

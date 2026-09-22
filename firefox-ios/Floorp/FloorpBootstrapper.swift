@@ -18,6 +18,8 @@ public final class FloorpBootstrapper {
     private static var readinessWaiters = [String: [CheckedContinuation<Void, Never>]]()
     @MainActor
     private static var deferredWebExtensionProfiles = Set<String>()
+    @MainActor
+    private static var hostInstallationWaiters = [String: [CheckedContinuation<Void, Never>]]()
 
     @MainActor
     public static func configure() {
@@ -66,7 +68,7 @@ public final class FloorpBootstrapper {
     }
 
     /// Installs one persistent `WKWebExtensionController` for the profile,
-    /// restores enabled contexts, then allows scene/tab restoration to begin.
+    /// then restores enabled contexts without blocking normal scene startup.
     @MainActor
     static func configureWebExtensionRuntime(
         for profile: Profile,
@@ -75,6 +77,8 @@ public final class FloorpBootstrapper {
         let profileIdentifier = profile.localName()
         readyProfiles.remove(profileIdentifier)
         guard FloorpFlags.isNativeWebExtensionsEnabled else {
+            deferredWebExtensionProfiles.remove(profileIdentifier)
+            markWebExtensionHostAvailable(for: profileIdentifier)
             markWebExtensionRuntimeReady(for: profileIdentifier, logger: logger)
             return
         }
@@ -86,6 +90,7 @@ public final class FloorpBootstrapper {
             deferredWebExtensionProfiles.remove(profileIdentifier)
             let windowManager: WindowManager = AppContainer.shared.resolve()
             windowManager.allWindowTabManagers().forEach { host.register(tabManager: $0) }
+            markWebExtensionHostAvailable(for: profileIdentifier)
             logger.log(
                 "Floorp: native WebExtension host installed for profile \(profileIdentifier)",
                 level: .info,
@@ -127,6 +132,7 @@ public final class FloorpBootstrapper {
                 return
             } else {
                 deferredWebExtensionProfiles.remove(profileIdentifier)
+                markWebExtensionHostAvailable(for: profileIdentifier)
                 logger.log(
                     "Floorp: native WebExtension host setup failed: \(error)",
                     level: .warning,
@@ -151,11 +157,29 @@ public final class FloorpBootstrapper {
     }
 
     @MainActor
+    static func waitForDeferredWebExtensionHost(for profile: Profile) async {
+        let profileIdentifier = profile.localName()
+        guard FloorpFlags.isNativeWebExtensionsEnabled,
+              deferredWebExtensionProfiles.contains(profileIdentifier),
+              FloorpNativeWebExtensionHost.host(for: profileIdentifier) == nil else { return }
+
+        await withCheckedContinuation { continuation in
+            if !deferredWebExtensionProfiles.contains(profileIdentifier)
+                || FloorpNativeWebExtensionHost.host(for: profileIdentifier) != nil {
+                continuation.resume()
+            } else {
+                hostInstallationWaiters[profileIdentifier, default: []].append(continuation)
+            }
+        }
+    }
+
+    @MainActor
     static func tearDownWebExtensionRuntime(for profile: Profile) async {
         let profileIdentifier = profile.localName()
         restoreTasks.removeValue(forKey: profileIdentifier)?.cancel()
         readinessTimeoutTasks.removeValue(forKey: profileIdentifier)?.cancel()
         deferredWebExtensionProfiles.remove(profileIdentifier)
+        markWebExtensionHostAvailable(for: profileIdentifier)
         markWebExtensionRuntimeReady(for: profileIdentifier, logger: DefaultLogger.shared)
         FloorpNativeWebExtensionHost.remove(for: profileIdentifier)
     }
@@ -193,5 +217,10 @@ public final class FloorpBootstrapper {
             category: .setup
         )
         readinessWaiters.removeValue(forKey: profileIdentifier)?.forEach { $0.resume() }
+    }
+
+    @MainActor
+    private static func markWebExtensionHostAvailable(for profileIdentifier: String) {
+        hostInstallationWaiters.removeValue(forKey: profileIdentifier)?.forEach { $0.resume() }
     }
 }

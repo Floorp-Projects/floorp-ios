@@ -47,6 +47,8 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
     private var lastReplacement: String?
     private var hideCursor = false
     private var isSettingMarkedText = false
+    private var isSettingInlineAutocompleteMarkedText = false
+    private var hasInlineAutocompleteMarkedText = false
     private var lastMarkedText = ""
     var clearButton: UIButton? {
         return value(forKey: "_clearButton") as? UIButton
@@ -136,17 +138,16 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
     }
 
     override func deleteBackward() {
-        lastMarkedText = ""
         lastReplacement = ""
         hideCursor = false
 
-        guard markedTextRange == nil else {
+        if removeCompletion() {
             // If we have an active completion, delete it without deleting any user-typed characters.
-            removeCompletion()
             forceResetCursor()
             return
         }
 
+        lastMarkedText = ""
         super.deleteBackward()
     }
 
@@ -162,16 +163,31 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
 
     override public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         isSettingMarkedText = true
-        lastMarkedText = markedText ?? ""
-        removeCompletion()
+        defer { isSettingMarkedText = false }
+        if hasInlineAutocompleteMarkedText {
+            removeCompletion()
+        }
         super.setMarkedText(markedText, selectedRange: selectedRange)
-        isSettingMarkedText = false
+        if isSettingInlineAutocompleteMarkedText,
+           let markedText,
+           !markedText.isEmpty,
+           markedTextRange != nil {
+            lastMarkedText = markedText
+            hasInlineAutocompleteMarkedText = true
+        } else {
+            lastMarkedText = ""
+            hasInlineAutocompleteMarkedText = false
+        }
     }
 
     func setAutocompleteSuggestion(_ suggestion: String?) {
         let searchText = text ?? ""
 
-        guard let suggestion = suggestion, isEditing && markedTextRange == nil else {
+        guard let suggestion = suggestion,
+              isEditing,
+              markedTextRange == nil,
+              Self.supportsInlineAutocomplete(primaryLanguage: textInputMode?.primaryLanguage)
+        else {
             hideCursor = false
             return
         }
@@ -183,15 +199,38 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
         }
 
         let suggestionText = String(suggestion.dropFirst(normalized.count))
-        setMarkedText(suggestionText, selectedRange: NSRange())
+        setInlineAutocompleteMarkedText(suggestionText)
         hideCursor = true
     }
 
+    func setInlineAutocompleteMarkedText(_ markedText: String) {
+        isSettingInlineAutocompleteMarkedText = true
+        defer { isSettingInlineAutocompleteMarkedText = false }
+        setMarkedText(markedText, selectedRange: NSRange())
+    }
+
+    static func supportsInlineAutocomplete(primaryLanguage: String?) -> Bool {
+        guard let primaryLanguage else { return true }
+        let language = primaryLanguage.lowercased()
+        return !["ja", "zh", "ko"].contains {
+            language == $0 || language.hasPrefix("\($0)-") || language.hasPrefix("\($0)_")
+        }
+    }
+
     func handleInputModeDidChange() {
-        guard !lastMarkedText.isEmpty, let currentText = self.text else { return }
-        self.text = currentText.replacingOccurrences(of: lastMarkedText, with: "")
+        handleInputModeDidChange(primaryLanguage: textInputMode?.primaryLanguage)
+    }
+
+    func handleInputModeDidChange(primaryLanguage: String?) {
+        guard hasInlineAutocompleteMarkedText, !lastMarkedText.isEmpty else { return }
+        let inlineAutocompleteText = lastMarkedText
+        removeCompletion()
+        guard Self.supportsInlineAutocomplete(primaryLanguage: primaryLanguage) else {
+            hideCursor = false
+            return
+        }
         hideCursor = true
-        setMarkedText(lastMarkedText, selectedRange: NSRange())
+        setInlineAutocompleteMarkedText(inlineAutocompleteText)
     }
 
     // MARK: - Notifiable
@@ -213,7 +252,11 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
         // Force marked text to refresh with new style
         if let markedRange = markedTextRange,
            let markedText = text(in: markedRange) {
-            setMarkedText(markedText, selectedRange: .init())
+            if hasInlineAutocompleteMarkedText {
+                setInlineAutocompleteMarkedText(markedText)
+            } else {
+                setMarkedText(markedText, selectedRange: .init())
+            }
         }
         tintClearButton()
     }
@@ -260,8 +303,11 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
 
     /// Commits the completion by setting the text and removing the highlight.
     private func applyCompletion() {
+        guard hasInlineAutocompleteMarkedText else {
+            hideCursor = false
+            return
+        }
         // Clear the current completion, then set the text without the attributed style.
-        lastMarkedText = ""
         let text = (self.text ?? "")
         let didRemoveCompletion = removeCompletion()
         self.text = text
@@ -277,14 +323,21 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
     @objc
     @discardableResult
     private func removeCompletion() -> Bool {
-        guard markedTextRange != nil else { return false }
+        guard hasInlineAutocompleteMarkedText else { return false }
+        guard markedTextRange != nil else {
+            lastMarkedText = ""
+            hasInlineAutocompleteMarkedText = false
+            return false
+        }
 
         text = textWithoutSuggestion()
+        lastMarkedText = ""
+        hasInlineAutocompleteMarkedText = false
         return true
     }
 
     private func textWithoutSuggestion() -> String? {
-        guard let markedTextRange else { return text }
+        guard hasInlineAutocompleteMarkedText, let markedTextRange else { return text }
 
         let location = offset(from: beginningOfDocument, to: markedTextRange.start)
         let length = offset(from: markedTextRange.start, to: markedTextRange.end)
@@ -295,7 +348,8 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
     @objc
     private func clear() {
         text = ""
-        removeCompletion()
+        lastMarkedText = ""
+        hasInlineAutocompleteMarkedText = false
         updateRightView()
         autocompleteDelegate?.locationTextFieldDidEnterText("")
     }
@@ -371,7 +425,8 @@ final class LocationTextField: UITextField, UITextFieldDelegate, ThemeApplicable
 
     func textFieldShouldClear(_ textField: UITextField) -> Bool {
         text = ""
-        removeCompletion()
+        lastMarkedText = ""
+        hasInlineAutocompleteMarkedText = false
         updateRightView()
         return autocompleteDelegate?.locationTextFieldShouldClear() ?? true
     }

@@ -18,6 +18,8 @@ class SceneCoordinator: BaseCoordinator,
     private let windowManager: WindowManager
     private let reservedWindowUUID: ReservedWindowUUID
     private let introManager: IntroScreenManagerProtocol
+    private let browserLaunchBarrier: (@MainActor () async -> Void)?
+    private var browserLaunchTask: Task<Void, Never>?
     private weak var launchScreenViewController: UIViewController?
     private(set) weak var tabManager: (any TabManager)?
 
@@ -26,7 +28,8 @@ class SceneCoordinator: BaseCoordinator,
          screenshotService: ScreenshotService = ScreenshotService(),
          sceneContainer: SceneContainer = SceneContainer(),
          windowManager: WindowManager = AppContainer.shared.resolve(),
-         introManager: IntroScreenManagerProtocol) {
+         introManager: IntroScreenManagerProtocol,
+         browserLaunchBarrier: (@MainActor () async -> Void)? = nil) {
         // Note: this is where we singularly decide the UUID for this specific iOS browser window (UIScene).
         // The logic is handled by `reserveNextAvailableWindowUUID`, but this is the point at which a window's UUID
         // is set; this same UUID will be injected throughout several of the window's related components
@@ -41,6 +44,7 @@ class SceneCoordinator: BaseCoordinator,
         self.sceneContainer = sceneContainer
         self.windowManager = windowManager
         self.introManager = introManager
+        self.browserLaunchBarrier = browserLaunchBarrier
 
         let navigationController = sceneSetupHelper.createNavigationController()
         let router = DefaultRouter(navigationController: navigationController)
@@ -133,6 +137,23 @@ class SceneCoordinator: BaseCoordinator,
     }
 
     private func startBrowser(with launchType: LaunchType?) {
+        guard !childCoordinators.contains(where: { $0 is BrowserCoordinator }) else { return }
+        guard browserLaunchTask == nil else { return }
+        guard let browserLaunchBarrier else {
+            startBrowserImmediately(with: launchType)
+            return
+        }
+
+        browserLaunchTask = Task { @MainActor [weak self] in
+            await browserLaunchBarrier()
+            guard let self else { return }
+            self.browserLaunchTask = nil
+            guard !Task.isCancelled else { return }
+            self.startBrowserImmediately(with: launchType)
+        }
+    }
+
+    private func startBrowserImmediately(with launchType: LaunchType?) {
         guard !childCoordinators.contains(where: { $0 is BrowserCoordinator }) else { return }
 
         logger.log("Starting browser with launchtype \(String(describing: launchType))",

@@ -86,56 +86,48 @@ HTTP(S) page is dark without popup/reload.
 ## Paste into TestFlight — What to Test
 
 ```text
-Floorp 0.3.0 — Native WebExtensions release candidate
+Floorp 0.3.0 — Runtime fixes and native WebExtensions candidate
 
-This build replaces Floorp's experimental extension runtime with Apple's public
-WKWebExtension APIs. It contains two optional, app-bundled extensions: Dark
-Reader 4.9.129 and uBlock Origin Lite 2026.825.1619. No sign-in is required.
+Please focus on three reported regressions:
 
-In Settings > Extensions, install Dark Reader. Confirm that page appearance,
-its action popup and options work; opening Options, even while also closing the popup,
-must wait until the Floorp tab has been accepted; disabling or uninstalling it immediately
-restores open pages. After disabling, enabling must show “Will enable after restart”
-and remain inactive until Floorp is restarted. After uninstalling, restart Floorp before
-reinstalling; installation then works. Confirm that
-closing its popup does not reveal a disabled
-Extensions picker underneath it.
-After leaving Floorp/Dark Reader idle for at least 35 seconds, navigate to a fresh
-HTTP(S) page and confirm that its first load is dark without a popup or reload.
+1. Fully quit and cold-launch Floorp repeatedly. The browser UI should appear promptly;
+   startup must not pause for 8–15 seconds while bundled extensions initialize.
+2. Use Google Search, especially on iPad. Google must not show an outdated-browser
+   warning. Floorp's displayed app version should remain 0.3.0.
+3. With NinjaMiles Japanese Romaji predictive input enabled, type “ka” and longer
+   text in the address bar. Composition should produce “か”, never “kか” or duplicated
+   characters. Editing and committing the text should remain stable.
 
-On iOS 26.0 or later, especially a physical iPhone running iOS 27.0, install
-uBlock Origin Lite and confirm installation completes without a background-readiness
-error. On non-sensitive test sites,
-allow up to four minutes for its first install, cold restore, or re-enable while
-WebKit compiles the native ruleset. Subsequent first navigation in each normal/private
-context can wait up to 90 seconds and fails closed if readiness is not confirmed. Then
-confirm that ad/tracker requests and cosmetic elements covered by its official
-rules are removed. Test its popup and dashboard; enable the Japanese filter list
-(if already enabled, turn it off and back on) and tap Done
-immediately, then confirm the selection and blocking persist. Also test disable/deferred-enable
-across restart, uninstall/restart/reinstall, and persistence after restart.
-If an update is offered, confirm it requires restart and completes on the next cold launch.
-Enable Developer mode in the dashboard, then open Matched rules from both normal
-and explicitly allowed Private Browsing. Also try closing during the route. Confirm the popup closes, the route opens once,
-and each page stays in its originating browsing mode.
-Save and then clear a harmless user DNR rule. Confirm there is no “unknown error,” blocking
-and the dashboard survive relaunch, and Matched rules never lists internal keeper ID 7,000,000.
-When upgrading an existing test install, confirm its rules/dashboard remain available; Floorp reserves
-two of WebKit's 30,000 dynamic/session slots, caps each store at 14,999, and never auto-deletes a rule.
-Confirm links from its dashboard open in a Floorp tab and retain the current
-normal/private browsing mode.
-The upstream Safari package intentionally does not show its strict-block
-interstitial; ordinary request blocking and cosmetic filtering should still
-work. On iOS versions earlier than 26.0, uBlock Origin Lite must be shown as
-requiring iOS 26.0 while Dark Reader remains available.
+This build uses Apple's public WKWebExtension APIs for two optional, app-bundled
+extensions: Dark Reader 4.9.129 and uBlock Origin Lite 2026.825.1619. No sign-in
+is required.
 
-Private Browsing access must remain off until separately enabled. Before
-opt-in, confirm neither extension affects private tabs. After opt-in, test both
-without leaking private tabs, grants, or extension state into normal browsing.
+In Settings > Extensions, install Dark Reader. Confirm page appearance, popup and
+Options work. Disabling or uninstalling it should restore open pages immediately.
+Re-enabling and reinstalling complete after restart and retain state. After at least
+35 seconds idle, a fresh HTTP(S) page should be dark on first load without a popup
+or reload.
 
-There must be no arbitrary ZIP, XPI, CRX, URL, or extension-store installation
-path. Please also report regressions in tabs, navigation history, downloads,
-Reader Mode, tracking protection, Notes, or Notes Sync.
+On iOS 26.0 or later, install uBlock Origin Lite. Allow up to four minutes for its
+first install, cold restore or re-enable while WebKit compiles the native ruleset.
+First navigation in each normal/private context can wait up to 90 seconds and fails
+closed if readiness is not confirmed. Confirm request and cosmetic blocking, popup,
+dashboard, Japanese filter-list persistence, restart/update flows, and dashboard links.
+Enable Developer mode and open Matched rules in normal and allowed Private Browsing;
+the route must open once and preserve its browsing mode. Save and clear a harmless
+user DNR rule: no “unknown error” should appear, state must survive relaunch, and
+Matched rules must never expose internal keeper ID 7,000,000. Existing installs must
+retain their rules without automatic deletion. The upstream Safari package has no
+strict-block interstitial; normal request/cosmetic filtering should still work.
+
+Private Browsing access must remain off until separately enabled. Before opt-in,
+neither extension may affect private tabs; after opt-in, private tabs, grants and
+extension state must not leak into normal browsing. Below iOS 26.0, uBlock Origin
+Lite must be shown as requiring iOS 26.0 while Dark Reader remains available.
+
+There must be no arbitrary ZIP, XPI, CRX, URL or extension-store installation path.
+Please also report regressions in tabs, history, downloads, Reader Mode, tracking
+protection, Notes or Notes Sync.
 ```
 
 ## Release evidence retained in the repository

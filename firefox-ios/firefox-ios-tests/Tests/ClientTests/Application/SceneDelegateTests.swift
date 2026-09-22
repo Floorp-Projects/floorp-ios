@@ -36,6 +36,22 @@ final class SceneDelegateTests: XCTestCase, FeatureFlaggable {
         _ = SceneDelegate()
     }
 
+    func testStartScene_startsCoordinatorSynchronously() throws {
+        let windowScene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let coordinator = StartTrackingSceneCoordinator(
+            scene: windowScene,
+            introManager: MockIntroScreenManager(isModernEnabled: false)
+        )
+        let delegate = SceneDelegate()
+        delegate.sessionManager = mockSessionManager
+        delegate.sceneCoordinator = coordinator
+        delegate.shareTelemetry = ShareTelemetry(gleanWrapper: mockGleanWrapper)
+
+        delegate.startScene(coordinator)
+
+        XCTAssertTrue(coordinator.didStart)
+    }
+
     // MARK: - handle(route:) - openedFromExternalSource
 
     func testHandleRoute_setsOpenedFromExternalSource_synchronously() throws {
@@ -158,6 +174,14 @@ final class SceneDelegateTests: XCTestCase, FeatureFlaggable {
         let delegate: SceneDelegate
         let coordinator: SceneCoordinator
         let scene: UIWindowScene
+    }
+
+    private final class StartTrackingSceneCoordinator: SceneCoordinator {
+        private(set) var didStart = false
+
+        override func start() {
+            didStart = true
+        }
     }
 
     private func createSubjectWithCoordinator() throws -> TestSubject {
