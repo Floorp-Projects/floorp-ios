@@ -1044,8 +1044,12 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         tab.navigationDelegate = navigationWaiter
         defer { tab.navigationDelegate = nil }
 
-        try await navigationWaiter.waitForNavigation {
-            host.load(url: optionsURL, in: tab)
+        // The host may replace the surface and does not return its navigation.
+        // Own the fixture load so delayed callbacks cannot complete a reload.
+        try await navigationWaiter.waitForNavigation { begin in
+            host.load(url: optionsURL, in: tab) { started in
+                begin { started ? tab.loadRequest(URLRequest(url: optionsURL)) : nil }
+            }
         }
         let webView = try XCTUnwrap(tab.webView)
         XCTAssertTrue(navigationWaiter.didCommit)
@@ -1053,6 +1057,71 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         tab.commitFloorpNativeSurfaceNavigation(url: optionsURL)
         XCTAssertTrue(tab.floorpNativeHasCommittedDocument)
         return webView
+    }
+
+    @MainActor
+    func testExtensionSurfaceNavigationWaiterIgnoresSupersededSameURLCallbacks() async throws {
+        let tab = createTab()
+        let webView = try XCTUnwrap(tab.webView as? MockTabWebView)
+        let url = try XCTUnwrap(URL(string: "https://example.com/options"))
+        webView.loadedURL = url
+        let waiter = ExtensionSurfaceNavigationWaiter(tab: tab, expectedURL: url)
+        let current = WKNavigation()
+        let superseded = WKNavigation()
+        let cancelled = NSError(
+            domain: NSURLErrorDomain,
+            code: NSURLErrorCancelled,
+            userInfo: [NSURLErrorFailingURLErrorKey: url]
+        )
+
+        try await waiter.waitForNavigation { begin in
+            begin {
+                Task { @MainActor in
+                    waiter.webView(webView, didFailProvisionalNavigation: superseded, withError: cancelled)
+                    waiter.webView(webView, didFail: superseded, withError: cancelled)
+                    waiter.webView(webView, didCommit: superseded)
+                    XCTAssertFalse(waiter.didCommit)
+                    waiter.webView(webView, didFinish: superseded)
+                    waiter.webView(webView, didCommit: current)
+                    waiter.webView(webView, didFinish: current)
+                }
+                return current
+            }
+        }
+        XCTAssertTrue(waiter.didCommit)
+    }
+
+    @MainActor
+    func testExtensionSurfaceNavigationWaiterReportsCurrentNavigationFailures() async throws {
+        let tab = createTab()
+        let webView = try XCTUnwrap(tab.webView as? MockTabWebView)
+        let url = try XCTUnwrap(URL(string: "https://example.com/options"))
+        webView.loadedURL = url
+
+        for code in [NSURLErrorCancelled, NSURLErrorTimedOut] {
+            let waiter = ExtensionSurfaceNavigationWaiter(tab: tab, expectedURL: url)
+            let current = WKNavigation()
+            let failure = NSError(domain: NSURLErrorDomain, code: code)
+            do {
+                try await waiter.waitForNavigation { begin in
+                    begin {
+                        Task { @MainActor in
+                            waiter.webView(webView, didFinish: WKNavigation())
+                            if code == NSURLErrorCancelled {
+                                waiter.webView(webView, didFailProvisionalNavigation: current, withError: failure)
+                            } else {
+                                waiter.webView(webView, didFail: current, withError: failure)
+                            }
+                        }
+                        return current
+                    }
+                }
+                XCTFail("The current navigation failure must be reported")
+            } catch {
+                XCTAssertEqual((error as NSError).domain, NSURLErrorDomain)
+                XCTAssertEqual((error as NSError).code, code)
+            }
+        }
     }
 
     @MainActor
@@ -1961,6 +2030,7 @@ private final class ExtensionSurfaceNavigationWaiter: NSObject, WKNavigationDele
     private let expectedURL: URL
     private var continuation: CheckedContinuation<Void, any Error>?
     private var loadToken: UUID?
+    private var expectedNavigation: WKNavigation?
     private(set) var didCommit = false
 
     init(tab: Tab, expectedURL: URL) {
@@ -1970,13 +2040,13 @@ private final class ExtensionSurfaceNavigationWaiter: NSObject, WKNavigationDele
 
     func waitForNavigation(
         timeoutNanoseconds: UInt64 = 10_000_000_000,
-        start: () -> Void
+        start: (@escaping (() -> WKNavigation?) -> Void) -> Void
     ) async throws {
         let token = UUID()
         loadToken = token
+        didCommit = false
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
-            start()
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: timeoutNanoseconds)
                 guard let self, self.loadToken == token else { return }
@@ -1986,16 +2056,24 @@ private final class ExtensionSurfaceNavigationWaiter: NSObject, WKNavigationDele
                     userInfo: [NSURLErrorFailingURLErrorKey: self.expectedURL]
                 )))
             }
+            start { [weak self] load in
+                guard let self, self.loadToken == token, self.continuation != nil else { return }
+                guard let navigation = load() else {
+                    self.complete(.failure(NSError(domain: "ExtensionSurfaceNavigationWaiter", code: 3)))
+                    return
+                }
+                self.expectedNavigation = navigation
+            }
         }
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
-        guard isExpectedNavigation(in: webView) else { return }
+        guard isExpectedNavigation(navigation, in: webView) else { return }
         didCommit = true
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
-        guard isExpectedNavigation(in: webView) else { return }
+        guard isExpectedNavigation(navigation, in: webView) else { return }
         complete(.success(()))
     }
 
@@ -2004,7 +2082,7 @@ private final class ExtensionSurfaceNavigationWaiter: NSObject, WKNavigationDele
         didFail navigation: WKNavigation?,
         withError error: any Error
     ) {
-        guard shouldHandleFailure(error, in: webView) else { return }
+        guard isExpectedNavigation(navigation, in: webView) else { return }
         complete(.failure(error))
     }
 
@@ -2013,7 +2091,7 @@ private final class ExtensionSurfaceNavigationWaiter: NSObject, WKNavigationDele
         didFailProvisionalNavigation navigation: WKNavigation?,
         withError error: any Error
     ) {
-        guard shouldHandleFailure(error, in: webView) else { return }
+        guard isExpectedNavigation(navigation, in: webView) else { return }
         complete(.failure(error))
     }
 
@@ -2026,21 +2104,13 @@ private final class ExtensionSurfaceNavigationWaiter: NSObject, WKNavigationDele
         guard let continuation else { return }
         self.continuation = nil
         loadToken = nil
+        expectedNavigation = nil
         continuation.resume(with: result)
     }
 
-    private func isExpectedNavigation(in webView: WKWebView) -> Bool {
-        webView === tab?.webView && webView.url == expectedURL
-    }
-
-    private func shouldHandleFailure(_ error: any Error, in webView: WKWebView) -> Bool {
-        guard webView === tab?.webView else { return false }
-        let error = error as NSError
-        let failingURL = error.userInfo[NSURLErrorFailingURLErrorKey] as? URL
-        if let failingURL {
-            return failingURL == expectedURL
-        }
-        return error.code != NSURLErrorCancelled && webView.url == expectedURL
+    private func isExpectedNavigation(_ navigation: WKNavigation?, in webView: WKWebView) -> Bool {
+        guard webView === tab?.webView, let navigation else { return false }
+        return navigation === expectedNavigation
     }
 }
 
