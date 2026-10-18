@@ -318,6 +318,61 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Repeat WebKit observer regression without retries
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          log_path="$RUNNER_TEMP/webview-observer-stability.log"
+          xcodebuild test-without-building \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination "$DESTINATION" \
+            -testPlan FloorpCI \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -only-testing:WebEngineTests/WKEngineWebViewTests/testLoad_callsObservers \
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 240 \
+            -test-iterations 10 \
+            -test-repetition-relaunch-enabled YES \
+            -resultBundlePath "$RUNNER_TEMP/FloorpWebViewObserverStability.xcresult" \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$log_path"
+
+          if grep -Fq "Fatal error: No definition registered for type:" "$log_path"; then
+            echo "::error::Repeated test host resolved an AppContainer dependency after teardown"
+            exit 1
+          fi
+
+          results_path="$RUNNER_TEMP/webview-observer-stability-tests.json"
+          xcrun xcresulttool get test-results tests \
+            --path "$RUNNER_TEMP/FloorpWebViewObserverStability.xcresult" \
+            --format json > "$results_path"
+          python3 scripts/ci/check-repeated-xctest-results.py \
+            --results "$results_path" \
+            --repetitions 10 \
+            --test 'WebEngineTests/WKEngineWebViewTests/testLoad_callsObservers()'
+
+      - name: Upload WebKit observer stability result
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-webview-observer-stability-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/FloorpWebViewObserverStability.xcresult
+            ${{ runner.temp }}/webview-observer-stability.log
+            ${{ runner.temp }}/webview-observer-stability-tests.json
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Run unit tests
         timeout-minutes: 60
         run: |
@@ -468,6 +523,7 @@ jobs:
 
           check_webkit_lifecycle_log "$RUNNER_TEMP/extension-surface-stability.log"
           check_webkit_lifecycle_log "$RUNNER_TEMP/favicon-cache-stability.log"
+          check_webkit_lifecycle_log "$RUNNER_TEMP/webview-observer-stability.log"
           check_webkit_lifecycle_log "$RUNNER_TEMP/test.log"
           check_webkit_lifecycle_log "$RUNNER_TEMP/ubol-production-host.log"
           check_webkit_lifecycle_log "$RUNNER_TEMP/ubol-release-acceptance.log"
@@ -504,6 +560,9 @@ jobs:
             ${{ runner.temp }}/favicon-cache-stability.log
             ${{ runner.temp }}/favicon-cache-stability-tests.json
             ${{ runner.temp }}/FloorpFaviconCacheStability.xcresult
+            ${{ runner.temp }}/webview-observer-stability.log
+            ${{ runner.temp }}/webview-observer-stability-tests.json
+            ${{ runner.temp }}/FloorpWebViewObserverStability.xcresult
             ${{ runner.temp }}/test.log
             ${{ runner.temp }}/ubol-production-host.log
             ${{ runner.temp }}/ubol-release-acceptance.log

@@ -72,6 +72,7 @@ class FloorpCIPythonContractTests(unittest.TestCase):
             "InvalidTransition",
         )
         logs = (
+            '$RUNNER_TEMP/webview-observer-stability.log',
             '$RUNNER_TEMP/test.log',
             '$RUNNER_TEMP/ubol-production-host.log',
             '$RUNNER_TEMP/ubol-release-acceptance.log',
@@ -650,6 +651,7 @@ class FloorpCIPythonContractTests(unittest.TestCase):
         _, guard = self._webkit_lifecycle_guard(workflow)
         script = self._webkit_lifecycle_guard_script(guard)
         log_names = (
+            "webview-observer-stability.log",
             "test.log",
             "ubol-production-host.log",
             "ubol-release-acceptance.log",
