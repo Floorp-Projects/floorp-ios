@@ -310,6 +310,57 @@ final class FloorpLibraryRegressionTests: XCTestCase {
 
 @MainActor
 final class FloorpNativeLibraryDrawerTests: XCTestCase {
+    func testNativeDoneDismissesPinnedSidebar() async throws {
+        try await assertNativeDoneDismissesDrawer(mode: .pinned)
+    }
+
+    func testNativeDoneDismissesOverlaySidebar() async throws {
+        try await assertNativeDoneDismissesDrawer(mode: .overlay)
+    }
+
+    private func assertNativeDoneDismissesDrawer(mode: FloorpPanelPresentationMode) async throws {
+        let resources = try makeResources()
+        defer { resources.cleanUp() }
+        let nativeHost = MockFloorpLibraryPanelHost()
+        let state = FloorpPanelPresentationState(windowUUID: .XCTestDefaultUUID)
+        state.select(try XCTUnwrap(resources.panelManager.panel(for: "floorp//bookmarks")))
+        let drawer = FloorpOverlayDrawerViewController(
+            panelManager: resources.panelManager,
+            notesStore: FloorpNotesStore(fileURL: resources.notesURL),
+            presentationState: state,
+            libraryPanelHost: nativeHost,
+            themeManager: MockThemeManager(),
+            notificationCenter: MockNotificationCenter(),
+            presentationModeProvider: { _, _ in mode }
+        )
+        let owner = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1024, height: 768))
+        window.rootViewController = owner
+        window.makeKeyAndVisible()
+        let animationsWereEnabled = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer {
+            UIView.setAnimationsEnabled(animationsWereEnabled)
+            window.rootViewController = nil
+            window.isHidden = true
+        }
+        let presented = expectation(description: "Native library drawer presented")
+        XCTAssertTrue(drawer.show(from: owner) { presented.fulfill() })
+        await fulfillment(of: [presented], timeout: 1)
+        XCTAssertEqual(drawer.presentationMode, mode)
+
+        let dismissed = expectation(description: "Native library Done closes drawer")
+        drawer.onDismissed = { dismissed.fulfill() }
+        let requestDismissal = try XCTUnwrap(nativeHost.onRequestDrawerDismiss)
+        requestDismissal()
+        await fulfillment(of: [dismissed], timeout: 1)
+
+        XCTAssertNil(state.activeDrawer)
+        XCTAssertNil(drawer.parent)
+        XCTAssertNil(owner.presentedViewController)
+        XCTAssertNil(nativeHost.viewController.parent)
+    }
+
     func testNativePanelsReuseHostAndNotesDetachesIt() throws {
         let resources = try makeResources()
         defer { resources.cleanUp() }

@@ -2853,7 +2853,7 @@ final class FloorpOverlayDrawerViewController:
             libraryViewController.endAppearanceTransition()
         }
         libraryPanelHost.onRequestDrawerDismiss = { [weak self] in
-            self?.dismissAfterOpeningMainContentIfNeeded()
+            self?.dismissDrawer()
         }
         return true
     }
