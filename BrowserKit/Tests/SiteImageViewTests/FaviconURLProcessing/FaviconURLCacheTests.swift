@@ -8,20 +8,8 @@ import TestKit
 
 @MainActor
 class FaviconURLCacheTests: XCTestCase {
-    var mockFileManager: MockURLCacheFileManager!
-
-    override func setUp() async throws {
-        try await super.setUp()
-        mockFileManager = MockURLCacheFileManager()
-    }
-
-    override func tearDown() async throws {
-        mockFileManager = nil
-        try await super.tearDown()
-    }
-
     func testGetURLFromCacheWithEmptyCache() async {
-        let subject = createSubject(fileManager: mockFileManager)
+        let subject = createSubject(fileManager: MockURLCacheFileManager())
         let cacheKey = "firefox.com"
         let result = try? await subject.getURLFromCache(cacheKey: cacheKey)
         XCTAssertNil(result)
