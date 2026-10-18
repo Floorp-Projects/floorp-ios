@@ -137,12 +137,26 @@ final class FloorpLibraryPanelHostTests: XCTestCase {
     func testExternalDoneRequestsDrawerDismissal() throws {
         let subject = try createSubject()
         XCTAssertTrue(subject.select(panelType: .bookmarks))
-        var dismissCount = 0
-        subject.onRequestDrawerDismiss = { dismissCount += 1 }
+        var reasons = [LibraryDismissalReason]()
+        subject.onRequestDrawerDismiss = { reasons.append($0) }
 
         try libraryViewController(from: subject).topRightButtonAction()
 
-        XCTAssertEqual(dismissCount, 1)
+        XCTAssertEqual(reasons, [.done])
+    }
+
+    func testExternalURLSelectionRequestsNavigationDismissal() throws {
+        let subject = try createSubject()
+        XCTAssertTrue(subject.select(panelType: .bookmarks))
+        var reasons = [LibraryDismissalReason]()
+        subject.onRequestDrawerDismiss = { reasons.append($0) }
+
+        try libraryViewController(from: subject).libraryPanel(
+            didSelectURL: URL(string: "https://example.com")!,
+            visitType: .bookmark
+        )
+
+        XCTAssertEqual(reasons, [.openedContent])
     }
 
     func testExternalSwitcherDoesNotInstallInternalSegmentControl() throws {
@@ -311,14 +325,26 @@ final class FloorpLibraryRegressionTests: XCTestCase {
 @MainActor
 final class FloorpNativeLibraryDrawerTests: XCTestCase {
     func testNativeDoneDismissesPinnedSidebar() async throws {
-        try await assertNativeDoneDismissesDrawer(mode: .pinned)
+        try await assertNativeDismissal(mode: .pinned, reason: .done, dismisses: true)
     }
 
     func testNativeDoneDismissesOverlaySidebar() async throws {
-        try await assertNativeDoneDismissesDrawer(mode: .overlay)
+        try await assertNativeDismissal(mode: .overlay, reason: .done, dismisses: true)
     }
 
-    private func assertNativeDoneDismissesDrawer(mode: FloorpPanelPresentationMode) async throws {
+    func testNativeURLSelectionKeepsPinnedSidebarOpen() async throws {
+        try await assertNativeDismissal(mode: .pinned, reason: .openedContent, dismisses: false)
+    }
+
+    func testNativeURLSelectionDismissesOverlaySidebar() async throws {
+        try await assertNativeDismissal(mode: .overlay, reason: .openedContent, dismisses: true)
+    }
+
+    private func assertNativeDismissal(
+        mode: FloorpPanelPresentationMode,
+        reason: LibraryDismissalReason,
+        dismisses: Bool
+    ) async throws {
         let resources = try makeResources()
         defer { resources.cleanUp() }
         let nativeHost = MockFloorpLibraryPanelHost()
@@ -349,10 +375,21 @@ final class FloorpNativeLibraryDrawerTests: XCTestCase {
         await fulfillment(of: [presented], timeout: 1)
         XCTAssertEqual(drawer.presentationMode, mode)
 
-        let dismissed = expectation(description: "Native library Done closes drawer")
-        drawer.onDismissed = { dismissed.fulfill() }
         let requestDismissal = try XCTUnwrap(nativeHost.onRequestDrawerDismiss)
-        requestDismissal()
+        guard dismisses else {
+            requestDismissal(reason)
+            XCTAssertTrue(state.activeDrawer === drawer)
+            XCTAssertTrue(drawer.parent === owner)
+            XCTAssertTrue(nativeHost.viewController.parent === drawer)
+            let cleanedUp = expectation(description: "Pinned drawer cleanup completed")
+            drawer.onDismissed = { cleanedUp.fulfill() }
+            drawer.dismissDrawer()
+            await fulfillment(of: [cleanedUp], timeout: 1)
+            return
+        }
+        let dismissed = expectation(description: "Native library request closes drawer")
+        drawer.onDismissed = { dismissed.fulfill() }
+        requestDismissal(reason)
         await fulfillment(of: [dismissed], timeout: 1)
 
         XCTAssertNil(state.activeDrawer)
@@ -570,7 +607,7 @@ private final class MockFloorpLibraryPanelHost: FloorpLibraryPanelHosting {
     let viewController = UIViewController()
     var selectedPanelType: FloorpPanelType?
     var allowsPanelSwitching = true
-    var onRequestDrawerDismiss: (() -> Void)?
+    var onRequestDrawerDismiss: ((LibraryDismissalReason) -> Void)?
     var dismissalDisposition = FloorpLibraryPanelDismissalDisposition.allow
     var selections = [FloorpPanelType]()
     var onSelection: ((FloorpPanelType) -> Void)?

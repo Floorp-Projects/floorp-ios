@@ -19,7 +19,7 @@ protocol FloorpLibraryPanelHosting: AnyObject {
     var viewController: UIViewController { get }
     var selectedPanelType: FloorpPanelType? { get }
     var allowsPanelSwitching: Bool { get }
-    var onRequestDrawerDismiss: (() -> Void)? { get set }
+    var onRequestDrawerDismiss: ((LibraryDismissalReason) -> Void)? { get set }
 
     @discardableResult
     func select(panelType: FloorpPanelType) -> Bool
@@ -33,7 +33,7 @@ final class FloorpLibraryPanelHost: FloorpLibraryPanelHosting, LibraryCoordinato
     private weak var actionDelegate: (any LibraryPanelDelegate & RecentlyClosedPanelDelegate)?
 
     let windowUUID: WindowUUID
-    var onRequestDrawerDismiss: (() -> Void)?
+    var onRequestDrawerDismiss: ((LibraryDismissalReason) -> Void)?
 
     var viewController: UIViewController {
         navigationController
@@ -74,10 +74,10 @@ final class FloorpLibraryPanelHost: FloorpLibraryPanelHosting, LibraryCoordinato
             bookmarksHandler: bookmarksHandler
         )
         libraryCoordinator.parentCoordinator = self
-        libraryCoordinator.libraryViewController?.onRequestHostDismiss = { [weak self] in
+        libraryCoordinator.libraryViewController?.onRequestHostDismiss = { [weak self] reason in
             guard let self,
                   self.prepareForDrawerDismissal() == .allow else { return }
-            self.onRequestDrawerDismiss?()
+            self.onRequestDrawerDismiss?(reason)
         }
     }
 
@@ -120,7 +120,7 @@ final class FloorpLibraryPanelHost: FloorpLibraryPanelHosting, LibraryCoordinato
     }
 
     func didFinishLibrary(from coordinator: Coordinator) {
-        onRequestDrawerDismiss?()
+        onRequestDrawerDismiss?(.done)
     }
 
     private func containsPresentedViewController(_ viewController: UIViewController) -> Bool {
