@@ -626,6 +626,62 @@ class FloorpWebExtensionOSMatrixContractTests(unittest.TestCase):
         )[1]
         self.assertIn('\n            "1" \\', ubol_acceptance_call)
 
+    def test_modern_runtime_cache_preparation_is_bounded_once_before_device_creation(self):
+        acceptance = self._step("Run focused WebExtension OS acceptance")
+        stem = "floorp-webextension-os-matrix-ios-26-0-dyld-shared-cache"
+        start = acceptance.index(
+            '          if ! run_command_with_timeout \\\n'
+            f'            "{stem}"'
+        )
+        end = acceptance.index("\n          fi", start) + len("\n          fi")
+        preparation = acceptance[start:end]
+        self.assertEqual(acceptance.count("dyld_shared_cache"), 1)
+        self.assertLess(acceptance.index("Expected one exact iOS 26.0 runtime"), start)
+        self.assertLess(start, acceptance.index('modern_simulator_name="Floorp WebExtension iOS '))
+        self.assertIn('            720 \\\n', preparation)
+        self.assertIn("xcrun simctl runtime dyld_shared_cache update --all; then", preparation)
+        self.assertIn("exit 1", preparation)
+        self.assertNotIn("|| true", preparation)
+
+    def test_modern_runtime_cache_preparation_fails_closed_without_running_simctl(self):
+        acceptance = self._step("Run focused WebExtension OS acceptance")
+        stem = "floorp-webextension-os-matrix-ios-26-0-dyld-shared-cache"
+        start = acceptance.index(
+            '          if ! run_command_with_timeout \\\n'
+            f'            "{stem}"'
+        )
+        end = acceptance.index("\n          fi", start) + len("\n          fi")
+        preparation = acceptance[start:end]
+        shim = """set -euo pipefail
+run_command_with_timeout() {
+  printf 'CALL\n' >> "$ARGUMENT_LOG"
+  printf '%s\n' "$@" >> "$ARGUMENT_LOG"
+  return "$CACHE_STATUS"
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            argument_log = Path(directory) / "arguments.log"
+            for status in (0, 1, 124):
+                with self.subTest(command_status=status):
+                    argument_log.unlink(missing_ok=True)
+                    process = subprocess.run(
+                        ["bash", "-c", shim + preparation + "\nprintf 'CREATE_NEXT\n'\n"],
+                        env={
+                            "PATH": os.environ["PATH"],
+                            "ARGUMENT_LOG": str(argument_log),
+                            "CACHE_STATUS": str(status),
+                        },
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    self.assertEqual(argument_log.read_text().splitlines(), [
+                        "CALL", stem, "720", "xcrun", "simctl", "runtime",
+                        "dyld_shared_cache", "update", "--all",
+                    ])
+                    self.assertEqual(process.returncode, 0 if status == 0 else 1)
+                    self.assertEqual("CREATE_NEXT" in process.stdout, status == 0)
+
     def test_simulator_boot_waits_are_bounded_and_modern_boot_recreates_once(self):
         acceptance = self._step("Run focused WebExtension OS acceptance")
         timeout_helper = acceptance.split(
