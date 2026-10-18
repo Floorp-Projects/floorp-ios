@@ -6337,7 +6337,7 @@ private final class FloorpAppearanceLibraryHost: FloorpLibraryPanelHosting {
     let recorder = FloorpAppearanceRecordingViewController()
     var selectedPanelType: FloorpPanelType?
     var allowsPanelSwitching = true
-    var onRequestDrawerDismiss: (() -> Void)?
+    var onRequestDrawerDismiss: ((LibraryDismissalReason) -> Void)?
 
     var viewController: UIViewController {
         recorder
