@@ -13,7 +13,7 @@
       "path": "background/floorp-compat.js"
     },
     {
-      "description": "Route Dark Reader storage through the compatibility layer; reject failed reads and writes instead of substituting defaults; keep UI mutation responses alive through durable storage; recover queue tails after failure; and report readiness only after startup, flush, and settings readback all succeed.",
+      "description": "Route Dark Reader storage through the compatibility layer; reject failed reads and writes instead of substituting defaults; keep UI mutation responses alive through durable storage; recover queue tails after failure; and report readiness only after startup, flush, and settings readback all succeed. Parse system-color-scheme-aware detector hints for sites with independently selected light and dark themes.",
       "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
       "path": "background/index.js"
     },
@@ -43,6 +43,14 @@
       "path": "ui/stylesheet-editor/index.js"
     },
     {
+      "description": "Detect GitHub system-synchronized themes from the active OS color scheme and the selected data-light-theme or data-dark-theme attribute, while preserving explicit light and dark site choices.",
+      "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+      "paths": [
+        "inject/index.js",
+        "config/detector-hints.config"
+      ]
+    },
+    {
       "description": "Provide a side-effect-free same-extension page from which Floorp can request background readiness after process eviction or before closing a surface.",
       "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
       "path": "floorp-readiness.html"
@@ -50,7 +58,7 @@
   ],
   "license": "MIT",
   "release": "v4.9.129",
-  "sha256": "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6",
+  "sha256": "be0f149f41c305f0686647f07e786ca5d3aac302450b335428b6f886f6ae98e7",
   "sourceCommit": "c2a707302a39b8047543712e9c582bac07835d34",
   "upstreamAsset": "darkreader-chrome-mv3.zip",
   "upstreamDownloadURL": "https://github.com/darkreader/darkreader/releases/download/v4.9.129/darkreader-chrome-mv3.zip",

@@ -36,6 +36,7 @@ unzip -q "${upstream_archive}" -d "${staging_directory}"
 # patch itself remains portable and free of embedded CR bytes.
 perl -pi -e 's/\r\n/\n/g' \
     "${staging_directory}/background/index.js" \
+    "${staging_directory}/inject/index.js" \
     "${staging_directory}/ui/devtools/index.js" \
     "${staging_directory}/ui/options/index.js" \
     "${staging_directory}/ui/stylesheet-editor/index.js" \

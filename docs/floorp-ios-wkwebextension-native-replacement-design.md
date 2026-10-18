@@ -24,8 +24,10 @@ wake しない。content script の有限再送、long-lived `runtime.Port`、`p
 `scripts: ["background/floorp-compat.js", "background/index.js"]`、`persistent: false` とし、
 Safari storage の sentinel、unknown-error 限定 retry、直列化、exact readback、UI mutation と
 close handshake、popup route の追跡と API 応答待機、iOS で表現不能な shortcut 設定 UI の
-除去を追加した Floorp 派生資産を同梱する。
-派生 SHA-256 は `92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6`、
+除去を追加した Floorp 派生資産を同梱する。GitHub の `data-color-mode="auto"` は
+OS の配色に対応する `data-light-theme` / `data-dark-theme` を確認して暗色テーマを
+検出する。OS が明色でも GitHub 側で暗色テーマを選べるため、`auto` だけでは判定しない。
+派生 SHA-256 は `be0f149f41c305f0686647f07e786ca5d3aac302450b335428b6f886f6ae98e7`、
 上流 ZIP の SHA-256 は `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64`
 である。patch、再現 build script、両 digest、上流 revision を provenance に固定し、
 App Review でも「無変更」とは表現しない。
@@ -635,7 +637,7 @@ wrapper と説明を隠し、options は空になる Hotkeys tab 自体を表示
 - 上流: `darkreader-chrome-mv3.zip` v4.9.129、SHA-256
   `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64`
 - 派生: `darkreader-floorp-ios-mv3-4.9.129.zip`、SHA-256
-  `92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6`
+  `be0f149f41c305f0686647f07e786ca5d3aac302450b335428b6f886f6ae98e7`
 - patch: `Bundled/darkreader-floorp-ios-mv3-4.9.129.patch`
 - build: `scripts/package-darkreader-ios.sh`
 - license: MIT、source revision `c2a707302a39b8047543712e9c582bac07835d34`

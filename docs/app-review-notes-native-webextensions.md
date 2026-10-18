@@ -41,11 +41,11 @@ Implementation:
 
 Bundled open-source components:
 - Dark Reader 4.9.129, MIT, Floorp-derived. Its patch replaces background.service_worker with
-  nonpersistent background.scripts, adds durable Safari storage/readback and acknowledged popup routes,
-  and removes unsupported shortcut UI.
+  nonpersistent background.scripts, hardens storage and popup routes, hides unsupported shortcut UI,
+  and detects GitHub's system-synchronized dark themes.
   Upstream: https://github.com/darkreader/darkreader/releases/download/v4.9.129/darkreader-chrome-mv3.zip
   Upstream SHA-256: 20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64
-  Derived SHA-256: 92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6
+  Derived SHA-256: be0f149f41c305f0686647f07e786ca5d3aac302450b335428b6f886f6ae98e7
   Patch: firefox-ios/Floorp/NativeWebExtensions/Bundled/darkreader-floorp-ios-mv3-4.9.129.patch
   Build: scripts/package-darkreader-ios.sh
   Source commit: c2a707302a39b8047543712e9c582bac07835d34
@@ -134,7 +134,7 @@ protection, Notes or Notes Sync.
 
 | Extension | Catalog identifier | Version | SHA-256 | Source commit | License | Package policy | Minimum |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability, close-tracked acknowledged popup routing, and unsupported shortcut UI removal; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
+| Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `be0f149f41c305f0686647f07e786ca5d3aac302450b335428b6f886f6ae98e7` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability, close-tracked acknowledged popup routing, and unsupported shortcut UI removal; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
 | uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `9cd2e9f6c3d62ef6154dd4dd9f94a5ef70a7ec7386bd2f05c11e29126b3aa6d6` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe close-tracked acknowledged popup routing, serialized storage, combined/per-store-capacity-reserved hidden Safari dynamic/session DNR keepers with non-destructive legacy migration, durable serialized DNR/script reconciliation with delayed-readback convergence, exact-runtime-URL fallback for WebKit lifecycle sender validation, random document-root-scoped custom cosmetic/procedural reinjection over WebKit all-frame native CSS with canary-backed acknowledgements and bounded 15-second retry windows, direct/inherited same-registration procedural API preload, transport-fallback bounded custom-filter snapshots, queue-time document-idle/dynamic recovery, dynamic-preflight-free origin-fallback replies, uncommitted-only document-idle replay, and event-bounded BFCache recovery across cross-host/normal/private/origin-fallback navigation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
 
 The canonical local evidence is:

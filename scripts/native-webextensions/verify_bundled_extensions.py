@@ -23,8 +23,8 @@ EXPECTED = (
         "review_license_marker": "MIT",
         "provenance_file": "darkreader-floorp-ios-mv3-4.9.129.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/darkreader-floorp-ios-mv3-4.9.129.patch": "0be2a2d45b51e2d4b2bc24ae139dddfb71c5386f6a5466702c0412d7376a9e07",
-            "scripts/package-darkreader-ios.sh": "059760bc09a4668c2edf835cfe34f0d548961341be5457adb8eaa4f114f81eac",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/darkreader-floorp-ios-mv3-4.9.129.patch": "ab31e63eb4f384da1f3bca41134ac7cccd71bfb32cbe596da5b2b09752577904",
+            "scripts/package-darkreader-ios.sh": "c044036131730ae6bd0bf429d75001a3e38ddcf6a88a25b66b82eb60e30dcf4b",
         },
         "provenance": {
             "asset": "darkreader-floorp-ios-mv3-4.9.129.zip",
@@ -41,7 +41,7 @@ EXPECTED = (
                     "path": "background/floorp-compat.js",
                 },
                 {
-                    "description": "Route Dark Reader storage through the compatibility layer; reject failed reads and writes instead of substituting defaults; keep UI mutation responses alive through durable storage; recover queue tails after failure; and report readiness only after startup, flush, and settings readback all succeed.",
+                    "description": "Route Dark Reader storage through the compatibility layer; reject failed reads and writes instead of substituting defaults; keep UI mutation responses alive through durable storage; recover queue tails after failure; and report readiness only after startup, flush, and settings readback all succeed. Parse system-color-scheme-aware detector hints for sites with independently selected light and dark themes.",
                     "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
                     "path": "background/index.js",
                 },
@@ -71,6 +71,14 @@ EXPECTED = (
                     "path": "ui/stylesheet-editor/index.js",
                 },
                 {
+                    "description": "Detect GitHub system-synchronized themes from the active OS color scheme and the selected data-light-theme or data-dark-theme attribute, while preserving explicit light and dark site choices.",
+                    "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
+                    "paths": [
+                        "inject/index.js",
+                        "config/detector-hints.config",
+                    ],
+                },
+                {
                     "description": "Provide a side-effect-free same-extension page from which Floorp can request background readiness after process eviction or before closing a surface.",
                     "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
                     "path": "floorp-readiness.html",
@@ -78,7 +86,7 @@ EXPECTED = (
             ],
             "license": "MIT",
             "release": "v4.9.129",
-            "sha256": "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6",
+            "sha256": "be0f149f41c305f0686647f07e786ca5d3aac302450b335428b6f886f6ae98e7",
             "sourceCommit": "c2a707302a39b8047543712e9c582bac07835d34",
             "upstreamAsset": "darkreader-chrome-mv3.zip",
             "upstreamDownloadURL": "https://github.com/darkreader/darkreader/releases/download/v4.9.129/darkreader-chrome-mv3.zip",
@@ -95,6 +103,19 @@ EXPECTED = (
         },
         "static_action_popup_path": "ui/popup/index.html",
         "archive_text_requirements": {
+            "background/index.js": (
+                '"MATCH SYSTEM DARK": "matchSystemDark",',
+                '"MATCH SYSTEM LIGHT": "matchSystemLight",',
+            ),
+            "config/detector-hints.config": (
+                'MATCH SYSTEM DARK\n[data-color-mode="auto"][data-dark-theme^="dark"]',
+                'MATCH SYSTEM LIGHT\n[data-color-mode="auto"][data-light-theme^="dark"]',
+            ),
+            "inject/index.js": (
+                "const systemMatches = isSystemDarkModeEnabled()",
+                "? hint.matchSystemDark",
+                ": hint.matchSystemLight;",
+            ),
             "ui/popup/index.js": (
                 "const pendingExtensionPageRoutes = new Set();",
                 "function trackExtensionPageRoute(operation)",

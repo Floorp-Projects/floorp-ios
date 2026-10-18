@@ -123,7 +123,7 @@ enum FloorpNativeWebExtensionCatalog {
         identifier: "floorp.bundled.darkreader",
         resourceName: "darkreader-floorp-ios-mv3-4.9.129",
         resourceExtension: "zip",
-        expectedSHA256: "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6",
+        expectedSHA256: "be0f149f41c305f0686647f07e786ca5d3aac302450b335428b6f886f6ae98e7",
         expectedVersion: "4.9.129",
         contextIdentifier: "org.darkreader.floorp-ios",
         baseURLScheme: "webkit-extension",
