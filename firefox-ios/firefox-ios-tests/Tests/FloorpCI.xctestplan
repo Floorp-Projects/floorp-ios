@@ -162,6 +162,8 @@
         "FloorpNativeLibraryDrawerTests/testBlockedHostPreventsRailSelection()",
         "FloorpNativeLibraryDrawerTests/testForeignRegistryRemovalDefersFallbackUntilBookmarkEditEnds()",
         "FloorpNativeLibraryDrawerTests/testForeignRegistryRemovalRetriesFallbackAfterPresentedWorkflowEnds()",
+        "FloorpNativeLibraryDrawerTests/testNativeDoneDismissesOverlaySidebar()",
+        "FloorpNativeLibraryDrawerTests/testNativeDoneDismissesPinnedSidebar()",
         "FloorpNativeLibraryDrawerTests/testNativePanelsReuseHostAndNotesDetachesIt()",
         "FloorpNoteEditorInteractionTests/testNewDraftFocusesAndSelectsTitleOnFirstAppearance()",
         "FloorpNoteEditorInteractionTests/testStableIdentifiersAndExplicitRetryReflectSaveState()",
