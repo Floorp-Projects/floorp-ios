@@ -194,6 +194,66 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | tee "$RUNNER_TEMP/build.log"
 
+      - name: Repeat favicon cache regressions without retries
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          log_path="$RUNNER_TEMP/favicon-cache-stability.log"
+          xcodebuild test-without-building \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination "$DESTINATION" \
+            -testPlan FloorpCI \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation \
+            -only-testing:SiteImageViewTests/FaviconURLCacheTests \
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 240 \
+            -test-iterations 10 \
+            -test-repetition-relaunch-enabled YES \
+            -resultBundlePath "$RUNNER_TEMP/FloorpFaviconCacheStability.xcresult" \
+            CODE_SIGN_IDENTITY= \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "$log_path"
+
+          if grep -Fq "Fatal error: No definition registered for type:" "$log_path"; then
+            echo "::error::Repeated test host resolved an AppContainer dependency after teardown"
+            exit 1
+          fi
+
+          for test_method in \
+            testGetURLFromCacheWithEmptyCache \
+            testGetURLFromCacheWithValuePresent \
+            testRetrieveCacheNotExpired \
+            testRetrieveCacheWithExpired \
+            testInitializationDoesNotRetainCacheWhileRetrievalIsSuspended \
+            testCacheURLPreservesNewValueAfterInitialRetrieval \
+            testClearCacheDoesNotRestoreEntriesFromInitialRetrieval; do
+            passed_count="$(grep -Fc "${test_method}]' passed" "$log_path")"
+            if [[ "$passed_count" -ne 10 ]]; then
+              echo "::error::$test_method must pass all 10 repetitions without retries (got $passed_count)"
+              exit 1
+            fi
+          done
+
+      - name: Upload favicon cache stability result
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: floorp-favicon-cache-stability-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/FloorpFaviconCacheStability.xcresult
+            ${{ runner.temp }}/favicon-cache-stability.log
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Repeat asynchronous extension surface regressions without retries
         timeout-minutes: 15
         run: |
@@ -226,6 +286,11 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee "$log_path"
+
+          if grep -Fq "Fatal error: No definition registered for type:" "$log_path"; then
+            echo "::error::Repeated test host resolved an AppContainer dependency after teardown"
+            exit 1
+          fi
 
           for test_method in \
             testActionPopupNavigationRetryYieldsToPendingInitialLoadFailure \
@@ -400,6 +465,7 @@ jobs:
           }
 
           check_webkit_lifecycle_log "$RUNNER_TEMP/extension-surface-stability.log"
+          check_webkit_lifecycle_log "$RUNNER_TEMP/favicon-cache-stability.log"
           check_webkit_lifecycle_log "$RUNNER_TEMP/test.log"
           check_webkit_lifecycle_log "$RUNNER_TEMP/ubol-production-host.log"
           check_webkit_lifecycle_log "$RUNNER_TEMP/ubol-release-acceptance.log"
@@ -432,6 +498,8 @@ jobs:
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/extension-surface-stability.log
             ${{ runner.temp }}/FloorpExtensionSurfaceStability.xcresult
+            ${{ runner.temp }}/favicon-cache-stability.log
+            ${{ runner.temp }}/FloorpFaviconCacheStability.xcresult
             ${{ runner.temp }}/test.log
             ${{ runner.temp }}/ubol-production-host.log
             ${{ runner.temp }}/ubol-release-acceptance.log

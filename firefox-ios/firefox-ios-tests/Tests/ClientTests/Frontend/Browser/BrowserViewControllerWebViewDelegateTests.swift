@@ -631,6 +631,7 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
     @MainActor
     // swiftlint:disable:next function_body_length
     func testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState() async throws {
+        try await waitForContentBlockerStartup()
         let fixture = try makeIsolatedNativeExtensionProfile(prefix: "surface-download")
         let isolatedProfile = fixture.profile
         let host = try FloorpNativeWebExtensionHost.install(for: isolatedProfile)
@@ -1029,6 +1030,40 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         XCTAssertNil(subject.pendingDownloadState(for: extensionWebView))
 
         await tab.close()
+    }
+
+    @MainActor
+    private func waitForContentBlockerStartup() async throws {
+        let blocker = ContentBlocker.shared
+        guard !blocker.setupCompleted else { return }
+
+        let ready = expectation(description: "Content blocker startup completed before creating extension tabs")
+        ready.assertForOverFulfill = true
+        let observation = ContentBlockerStartupObservation()
+        let observer = NotificationCenter.default.addObserver(
+            forName: .contentBlockerTabSetupRequired,
+            object: nil,
+            queue: nil
+        ) { _ in
+            Task { @MainActor in
+                guard observation.isActive, !observation.didObserveCompletion, blocker.setupCompleted else { return }
+                observation.didObserveCompletion = true
+                ready.fulfill()
+            }
+        }
+        defer {
+            observation.isActive = false
+            NotificationCenter.default.removeObserver(observer)
+        }
+
+        await fulfillment(of: [ready], timeout: 60)
+        guard observation.didObserveCompletion, blocker.setupCompleted else {
+            throw NSError(
+                domain: "ContentBlockerStartupWaiter",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Content blocker startup did not complete within 60 seconds"]
+            )
+        }
     }
 
     @MainActor
@@ -2041,6 +2076,12 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
 
         XCTAssertTrue(subject.googleLensSearches.isEmpty)
     }
+}
+
+@MainActor
+private final class ContentBlockerStartupObservation {
+    var isActive = true
+    var didObserveCompletion = false
 }
 
 @MainActor
