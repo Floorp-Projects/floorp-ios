@@ -1541,6 +1541,14 @@ jobs:
           df -h "$RUNNER_TEMP" \
             | tee "$RUNNER_TEMP/floorp-webextension-os-matrix-disk-after-ios-26-0-download.log"
 
+          if ! run_command_with_timeout \
+            "floorp-webextension-os-matrix-ios-26-0-dyld-shared-cache" \
+            720 \
+            xcrun simctl runtime dyld_shared_cache update --all; then
+            echo "::error::iOS 26.0 simulator runtime cache preparation failed"
+            exit 1
+          fi
+
           modern_simulator_name="Floorp WebExtension iOS $WEBEXTENSION_MODERN_OS run-$GITHUB_RUN_ID-attempt-$GITHUB_RUN_ATTEMPT"
 
           recover_modern_simulator_for_cleanup() {
