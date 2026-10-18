@@ -1066,8 +1066,10 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         let url = try XCTUnwrap(URL(string: "https://example.com/options"))
         webView.loadedURL = url
         let waiter = ExtensionSurfaceNavigationWaiter(tab: tab, expectedURL: url)
-        let current = WKNavigation()
-        let superseded = WKNavigation()
+        let navigationSource = makeNavigationSource()
+        defer { navigationSource.stopLoading() }
+        let superseded = try makeNavigation(in: navigationSource)
+        let current = try makeNavigation(in: navigationSource)
         let cancelled = NSError(
             domain: NSURLErrorDomain,
             code: NSURLErrorCancelled,
@@ -1097,16 +1099,19 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
         let webView = try XCTUnwrap(tab.webView as? MockTabWebView)
         let url = try XCTUnwrap(URL(string: "https://example.com/options"))
         webView.loadedURL = url
+        let navigationSource = makeNavigationSource()
+        defer { navigationSource.stopLoading() }
 
         for code in [NSURLErrorCancelled, NSURLErrorTimedOut] {
             let waiter = ExtensionSurfaceNavigationWaiter(tab: tab, expectedURL: url)
-            let current = WKNavigation()
+            let superseded = try makeNavigation(in: navigationSource)
+            let current = try makeNavigation(in: navigationSource)
             let failure = NSError(domain: NSURLErrorDomain, code: code)
             do {
                 try await waiter.waitForNavigation { begin in
                     begin {
                         Task { @MainActor in
-                            waiter.webView(webView, didFinish: WKNavigation())
+                            waiter.webView(webView, didFinish: superseded)
                             if code == NSURLErrorCancelled {
                                 waiter.webView(webView, didFailProvisionalNavigation: current, withError: failure)
                             } else {
@@ -1122,6 +1127,20 @@ class BrowserViewControllerWebViewDelegateTests: XCTestCase {
                 XCTAssertEqual((error as NSError).code, code)
             }
         }
+    }
+
+    @MainActor
+    private func makeNavigationSource() -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        return WKWebView(frame: .zero, configuration: configuration)
+    }
+
+    @MainActor
+    private func makeNavigation(in webView: WKWebView) throws -> WKNavigation {
+        let navigation = try XCTUnwrap(webView.loadHTMLString("<!doctype html><title>Fixture</title>", baseURL: nil))
+        webView.stopLoading()
+        return navigation
     }
 
     @MainActor

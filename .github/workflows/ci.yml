@@ -211,7 +211,10 @@ jobs:
             -onlyUsePackageVersionsFromResolvedFile \
             -skipMacroValidation \
             -only-testing:ClientTests/FloorpNativeWebExtensionIntegrationTests/testActionPopupNavigationRetryYieldsToPendingInitialLoadFailure \
+            -only-testing:ClientTests/FloorpNativeWebExtensionIntegrationTests/testActionPopupInitialLoadFailureSupersedesCompetingCloseAlert \
             -only-testing:ClientTests/BrowserViewControllerWebViewDelegateTests/testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState \
+            -only-testing:ClientTests/BrowserViewControllerWebViewDelegateTests/testExtensionSurfaceNavigationWaiterIgnoresSupersededSameURLCallbacks \
+            -only-testing:ClientTests/BrowserViewControllerWebViewDelegateTests/testExtensionSurfaceNavigationWaiterReportsCurrentNavigationFailures \
             -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 120 \
@@ -226,7 +229,10 @@ jobs:
 
           for test_method in \
             testActionPopupNavigationRetryYieldsToPendingInitialLoadFailure \
-            testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState; do
+            testActionPopupInitialLoadFailureSupersedesCompetingCloseAlert \
+            testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState \
+            testExtensionSurfaceNavigationWaiterIgnoresSupersededSameURLCallbacks \
+            testExtensionSurfaceNavigationWaiterReportsCurrentNavigationFailures; do
             passed_count="$(grep -Fc "${test_method}]' passed" "$log_path")"
             if [[ "$passed_count" -ne 10 ]]; then
               echo "::error::$test_method must pass all 10 repetitions without retries (got $passed_count)"
