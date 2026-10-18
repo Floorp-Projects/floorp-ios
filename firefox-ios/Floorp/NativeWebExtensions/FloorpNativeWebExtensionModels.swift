@@ -76,6 +76,10 @@ enum FloorpNativeWebExtensionCatalog {
         "775dd26e8a3b1414d71f5329d52bcf0c1cfe57986f370f6d27fdc003a18fa16c"
     static let preDurableStorageDarkReaderSHA256 =
         "c397484ffd0b1a413bab9263ff4e2ef479bc7973689e0ae88c2e77e82cbfd076"
+    static let preGitHubThemeDetectionDarkReaderSHA256 =
+        "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6"
+    static let preSystemThemeLifecycleDarkReaderSHA256 =
+        "0bef3c6b8163f30b6e561a6d33b9cc9b70222e9b372c2a172be6be1d7cfd6286"
     static let legacyUBlockOriginLiteSHA256 =
         "89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94"
     static let initialFloorpUBlockOriginLiteSHA256 =
@@ -123,7 +127,7 @@ enum FloorpNativeWebExtensionCatalog {
         identifier: "floorp.bundled.darkreader",
         resourceName: "darkreader-floorp-ios-mv3-4.9.129",
         resourceExtension: "zip",
-        expectedSHA256: "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6",
+        expectedSHA256: "767b0d327fd2ef9c4524fcc4b79124fb4342938035e06fa12c97bf06ab135118",
         expectedVersion: "4.9.129",
         contextIdentifier: "org.darkreader.floorp-ios",
         baseURLScheme: "webkit-extension",
@@ -206,7 +210,9 @@ enum FloorpNativeWebExtensionCatalog {
             let isPreviousFloorpPackage = record.packageReference == darkReader.packageReference
                 && [
                     previousDarkReaderSHA256,
-                    preDurableStorageDarkReaderSHA256
+                    preDurableStorageDarkReaderSHA256,
+                    preGitHubThemeDetectionDarkReaderSHA256,
+                    preSystemThemeLifecycleDarkReaderSHA256
                 ].contains(record.sha256)
             return isOfficialPackage || isPreviousFloorpPackage ? darkReader : nil
         }

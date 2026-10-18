@@ -2171,3 +2171,182 @@
 +<!doctype html>
 +<meta charset="utf-8">
 +<title>Dark Reader readiness</title>
+--- a/background/index.js
++++ b/background/index.js
+@@ -1688,6 +1688,8 @@
+     const detectorHintsCommands = {
+         "TARGET": "target",
+         "MATCH": "match",
++        "MATCH SYSTEM DARK": "matchSystemDark",
++        "MATCH SYSTEM LIGHT": "matchSystemLight",
+         "NO DARK THEME": "noDarkTheme",
+         "SYSTEM THEME": "systemTheme",
+         "IFRAME": "iframe"
+--- a/config/detector-hints.config
++++ b/config/detector-hints.config
+@@ -766,6 +766,12 @@
+ 
+ MATCH
+ [data-color-mode="dark"]
++
++MATCH SYSTEM DARK
++[data-color-mode="auto"][data-dark-theme^="dark"]
++
++MATCH SYSTEM LIGHT
++[data-color-mode="auto"][data-light-theme^="dark"]
+ 
+ ================================
+ 
+--- a/inject/index.js
++++ b/inject/index.js
+@@ -1305,9 +1305,15 @@
+     let hintMatchObserver;
+     function detectUsingHint(hint, success) {
+         stopDetectingUsingHint();
+-        const matchSelector = (hint.match || []).join(", ");
+         function checkMatch(target) {
+-            if (target.matches?.(matchSelector)) {
++            const systemMatches = isSystemDarkModeEnabled()
++                ? hint.matchSystemDark
++                : hint.matchSystemLight;
++            const matchSelector = [
++                ...(hint.match || []),
++                ...(systemMatches || [])
++            ].join(", ");
++            if (matchSelector && target.matches?.(matchSelector)) {
+                 stopDetectingUsingHint();
+                 success();
+                 return true;
+--- a/background/index.js
++++ b/background/index.js
+@@ -4123,6 +4123,35 @@
+             ConfigManager.raw.darkSites = sites;
+             ConfigManager.handleDarkSites();
+         }
++        static upgradeGitHubDetectorHints(text) {
++            if (typeof text !== "string") {
++                return text;
++            }
++            return text.split(/(^[ \t]*={2,}[ \t]*\r?$)/gm).map((block) => {
++                const hints = parseDetectorHints(block);
++                const hint = hints[0];
++                const commands = block.split(/\r?\n/).filter((line) =>
++                    /^[A-Z]+(\s[A-Z]+){0,2}$/.test(line)
++                );
++                if (
++                    hints.length !== 1 || hint.url.length !== 1 ||
++                    hint.url[0] !== "github.com" || hint.target !== "html" ||
++                    hint.match?.length !== 1 ||
++                    hint.match[0] !== '[data-color-mode="dark"]' ||
++                    commands.join("\n") !== "TARGET\nMATCH"
++                ) {
++                    return block;
++                }
++                const newline = block.includes("\r\n") ? "\r\n" : "\n";
++                return block.trimEnd() + [
++                    "", "", "MATCH SYSTEM DARK",
++                    '[data-color-mode="auto"][data-dark-theme^="dark"]',
++                    "", "MATCH SYSTEM LIGHT",
++                    '[data-color-mode="auto"][data-light-theme^="dark"]',
++                    "", ""
++                ].join(newline);
++            }).join("");
++        }
+         static async loadDetectorHints({local}) {
+             const $config = await ConfigManager.loadConfig({
+                 name: "Detector Hints",
+@@ -4130,7 +4159,9 @@
+                 localURL: CONFIG_URLs.detectorHints.local,
+                 remoteURL: CONFIG_URLs.detectorHints.remote
+             });
+-            ConfigManager.raw.detectorHints = $config;
++            ConfigManager.raw.detectorHints = local
++                ? $config
++                : ConfigManager.upgradeGitHubDetectorHints($config);
+             ConfigManager.handleDetectorHints();
+         }
+         static async loadDynamicThemeFixes({local}) {
+--- a/background/index.js
++++ b/background/index.js
+@@ -4127,7 +4127,7 @@
+             if (typeof text !== "string") {
+                 return text;
+             }
+-            return text.split(/(^[ \t]*={2,}[ \t]*\r?$)/gm).map((block) => {
++            const upgraded = text.split(/(^[ \t]*={2,}[ \t]*\r?$)/gm).map((block) => {
+                 const hints = parseDetectorHints(block);
+                 const hint = hints[0];
+                 const commands = block.split(/\r?\n/).filter((line) =>
+@@ -4151,6 +4151,21 @@
+                     "", ""
+                 ].join(newline);
+             }).join("");
++            if (parseDetectorHints(upgraded).some(({url}) =>
++                isURLInList("https://github.com/", url) ||
++                url.some((pattern) => getDomain(pattern) === "github.com")
++            )) {
++                return upgraded;
++            }
++            const newline = text.includes("\r\n") ? "\r\n" : "\n";
++            return upgraded.trimEnd() + [
++                "", "", "================================", "", "github.com",
++                "", "TARGET", "html", "", "MATCH", '[data-color-mode="dark"]',
++                "", "MATCH SYSTEM DARK",
++                '[data-color-mode="auto"][data-dark-theme^="dark"]',
++                "", "MATCH SYSTEM LIGHT",
++                '[data-color-mode="auto"][data-light-theme^="dark"]', ""
++            ].join(newline);
+         }
+         static async loadDetectorHints({local}) {
+             const $config = await ConfigManager.loadConfig({
+--- a/inject/index.js
++++ b/inject/index.js
+@@ -9285,6 +9285,8 @@
+     }
+ 
+     let unloaded = false;
++    // Keep this through dark-theme CLEAN_UP to recheck the next OS appearance.
++    let recheckSystemThemeHints = false;
+     const scriptId = generateUID();
+     function cleanup() {
+         unloaded = true;
+@@ -9336,6 +9338,20 @@
+             return;
+         }
+         logInfoCollapsed(`onMessage[${message.type}]`, message);
++        if (
++            message.type === MessageTypeBGtoCS.ADD_CSS_FILTER ||
++            message.type === MessageTypeBGtoCS.ADD_STATIC_THEME ||
++            message.type === MessageTypeBGtoCS.ADD_SVG_FILTER ||
++            message.type === MessageTypeBGtoCS.ADD_DYNAMIC_THEME
++        ) {
++            stopDarkThemeDetector();
++            recheckSystemThemeHints = Boolean(
++                message.data.detectDarkTheme &&
++                message.data.detectorHints?.some((hint) =>
++                    hint.matchSystemDark?.length || hint.matchSystemLight?.length
++                )
++            );
++        }
+         switch (message.type) {
+             case MessageTypeBGtoCS.ADD_CSS_FILTER:
+             case MessageTypeBGtoCS.ADD_STATIC_THEME: {
+@@ -9425,12 +9441,15 @@
+             }
+         });
+     }
+-    runColorSchemeChangeDetector((isDark) =>
++    runColorSchemeChangeDetector((isDark) => {
+         sendMessage({
+             type: MessageTypeCStoBG.COLOR_SCHEME_CHANGE,
+             data: {isDark}
+-        })
+-    );
++        });
++        if (recheckSystemThemeHints) {
++            sendConnectionOrResumeMessage(MessageTypeCStoBG.DOCUMENT_CONNECT);
++        }
++    });
+     chrome.runtime.onMessage.addListener(onMessage);
+     sendConnectionOrResumeMessage(MessageTypeCStoBG.DOCUMENT_CONNECT);
+     function onPageHide(e) {
