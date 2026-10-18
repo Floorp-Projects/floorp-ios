@@ -23,7 +23,7 @@ EXPECTED = (
         "review_license_marker": "MIT",
         "provenance_file": "darkreader-floorp-ios-mv3-4.9.129.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/darkreader-floorp-ios-mv3-4.9.129.patch": "efcbf25f8c5033077b1f57a7be4eb76f9c6c3765dc0313a204a80fda1dc7e39d",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/darkreader-floorp-ios-mv3-4.9.129.patch": "6775c38d08244110b1be61fb8cde92036b584d38241b8d16f881bff70dfe7083",
             "scripts/package-darkreader-ios.sh": "c044036131730ae6bd0bf429d75001a3e38ddcf6a88a25b66b82eb60e30dcf4b",
         },
         "provenance": {
@@ -41,7 +41,7 @@ EXPECTED = (
                     "path": "background/floorp-compat.js",
                 },
                 {
-                    "description": "Route Dark Reader storage through the compatibility layer; reject failed reads and writes instead of substituting defaults; keep UI mutation responses alive through durable storage; recover queue tails after failure; and report readiness only after startup, flush, and settings readback all succeed. Parse system-color-scheme-aware detector hints for sites with independently selected light and dark themes. Upgrade only the recognized legacy GitHub hint in downloaded site fixes while preserving custom selectors, future directives, and DevTools overrides.",
+                    "description": "Route Dark Reader storage through the compatibility layer; reject failed reads and writes instead of substituting defaults; keep UI mutation responses alive through durable storage; recover queue tails after failure; and report readiness only after startup, flush, and settings readback all succeed. Parse system-color-scheme-aware detector hints for sites with independently selected light and dark themes. Upgrade only the recognized legacy GitHub hint in downloaded site fixes while preserving custom selectors, future directives, and DevTools overrides. Retain a GitHub fallback when online configuration omits the site.",
                     "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
                     "path": "background/index.js",
                 },
@@ -71,7 +71,7 @@ EXPECTED = (
                     "path": "ui/stylesheet-editor/index.js",
                 },
                 {
-                    "description": "Detect GitHub system-synchronized themes from the active OS color scheme and the selected data-light-theme or data-dark-theme attribute, while preserving explicit light and dark site choices.",
+                    "description": "Detect GitHub system-synchronized themes from the active OS color scheme and the selected data-light-theme or data-dark-theme attribute, while preserving explicit light and dark site choices. Reconnect on system appearance changes to reset stale dark-theme detection and reapply current settings in both directions, including after detector cleanup.",
                     "patch": "darkreader-floorp-ios-mv3-4.9.129.patch",
                     "paths": [
                         "inject/index.js",
@@ -86,7 +86,7 @@ EXPECTED = (
             ],
             "license": "MIT",
             "release": "v4.9.129",
-            "sha256": "0bef3c6b8163f30b6e561a6d33b9cc9b70222e9b372c2a172be6be1d7cfd6286",
+            "sha256": "767b0d327fd2ef9c4524fcc4b79124fb4342938035e06fa12c97bf06ab135118",
             "sourceCommit": "c2a707302a39b8047543712e9c582bac07835d34",
             "upstreamAsset": "darkreader-chrome-mv3.zip",
             "upstreamDownloadURL": "https://github.com/darkreader/darkreader/releases/download/v4.9.129/darkreader-chrome-mv3.zip",

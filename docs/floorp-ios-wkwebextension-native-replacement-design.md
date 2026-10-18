@@ -27,9 +27,13 @@ close handshake、popup route の追跡と API 応答待機、iOS で表現不�
 除去を追加した Floorp 派生資産を同梱する。GitHub の `data-color-mode="auto"` は
 OS の配色に対応する `data-light-theme` / `data-dark-theme` を確認して暗色テーマを
 検出する。OS が明色でも GitHub 側で暗色テーマを選べるため、`auto` だけでは判定しない。
-サイト修正の同期でも既知の旧 GitHub hint だけを補完し、別 selector、未知の command、
-既存の条件付き hint、DevTools の override は書き換えない。
-派生 SHA-256 は `0bef3c6b8163f30b6e561a6d33b9cc9b70222e9b372c2a172be6be1d7cfd6286`、
+OS 外観の変更時は既存の配色 listener から接続を再評価し、暗色検出による cleanup 後も
+明色側へ戻れば現在のユーザー設定に従って Filter+ などを再適用する。
+サイト修正の同期では既知の旧 GitHub hint を補完し、GitHub の rule が無い配信にも
+Floorp の hint を追加する。別 selector、未知の command、既存の条件付き hint、
+DevTools の override は書き換えない。直前の同梱 ZIP からのコールド移行は
+context identity、permission、ユーザー設定を保持する。
+派生 SHA-256 は `767b0d327fd2ef9c4524fcc4b79124fb4342938035e06fa12c97bf06ab135118`、
 上流 ZIP の SHA-256 は `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64`
 である。patch、再現 build script、両 digest、上流 revision を provenance に固定し、
 App Review でも「無変更」とは表現しない。
@@ -639,7 +643,7 @@ wrapper と説明を隠し、options は空になる Hotkeys tab 自体を表示
 - 上流: `darkreader-chrome-mv3.zip` v4.9.129、SHA-256
   `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64`
 - 派生: `darkreader-floorp-ios-mv3-4.9.129.zip`、SHA-256
-  `0bef3c6b8163f30b6e561a6d33b9cc9b70222e9b372c2a172be6be1d7cfd6286`
+  `767b0d327fd2ef9c4524fcc4b79124fb4342938035e06fa12c97bf06ab135118`
 - patch: `Bundled/darkreader-floorp-ios-mv3-4.9.129.patch`
 - build: `scripts/package-darkreader-ios.sh`
 - license: MIT、source revision `c2a707302a39b8047543712e9c582bac07835d34`

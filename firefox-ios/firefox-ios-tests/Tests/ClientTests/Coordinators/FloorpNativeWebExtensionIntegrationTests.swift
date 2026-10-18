@@ -281,7 +281,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(
             package.sha256,
-            "92f40f485205f61233185d1fb7cfb84b1dec243ebefc181d5f53943adc3c97c6"
+            "767b0d327fd2ef9c4524fcc4b79124fb4342938035e06fa12c97bf06ab135118"
         )
         XCTAssertEqual(package.url.pathExtension, "zip")
 
@@ -2021,6 +2021,18 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
     }
 
     func testColdRestoreMigratesThePreviousDarkReaderPackageWithoutLosingUserState() async throws {
+        try await assertDarkReaderColdMigrationPreservesUserState(
+            sha256: FloorpNativeWebExtensionCatalog.previousDarkReaderSHA256
+        )
+        try await assertDarkReaderColdMigrationPreservesUserState(
+            sha256: FloorpNativeWebExtensionCatalog.preGitHubThemeDetectionDarkReaderSHA256
+        )
+        try await assertDarkReaderColdMigrationPreservesUserState(
+            sha256: FloorpNativeWebExtensionCatalog.preSystemThemeLifecycleDarkReaderSHA256
+        )
+    }
+
+    private func assertDarkReaderColdMigrationPreservesUserState(sha256: String) async throws {
         let profileFixture = try makeIsolatedHostProfile(prefix: "darkreader_migration")
         let profile = profileFixture.profile
         defer { profileFixture.cleanup() }
@@ -2038,7 +2050,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
                 expiration: optionalPermissionExpiration
             )
         )
-        legacyRecord.sha256 = FloorpNativeWebExtensionCatalog.previousDarkReaderSHA256
+        legacyRecord.sha256 = sha256
         legacyRecord.isEnabled = false
         legacyRecord.unloadState = FloorpNativeWebExtensionUnloadState(
             processIdentifier: UUID(),
@@ -6216,6 +6228,18 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         )
 
         record.sha256 = FloorpNativeWebExtensionCatalog.preDurableStorageDarkReaderSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(record),
+            FloorpNativeWebExtensionCatalog.darkReader
+        )
+
+        record.sha256 = FloorpNativeWebExtensionCatalog.preGitHubThemeDetectionDarkReaderSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(record),
+            FloorpNativeWebExtensionCatalog.darkReader
+        )
+
+        record.sha256 = FloorpNativeWebExtensionCatalog.preSystemThemeLifecycleDarkReaderSHA256
         XCTAssertEqual(
             FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(record),
             FloorpNativeWebExtensionCatalog.darkReader

@@ -2266,3 +2266,87 @@
              ConfigManager.handleDetectorHints();
          }
          static async loadDynamicThemeFixes({local}) {
+--- a/background/index.js
++++ b/background/index.js
+@@ -4127,7 +4127,7 @@
+             if (typeof text !== "string") {
+                 return text;
+             }
+-            return text.split(/(^[ \t]*={2,}[ \t]*\r?$)/gm).map((block) => {
++            const upgraded = text.split(/(^[ \t]*={2,}[ \t]*\r?$)/gm).map((block) => {
+                 const hints = parseDetectorHints(block);
+                 const hint = hints[0];
+                 const commands = block.split(/\r?\n/).filter((line) =>
+@@ -4151,6 +4151,21 @@
+                     "", ""
+                 ].join(newline);
+             }).join("");
++            if (parseDetectorHints(upgraded).some(({url}) =>
++                isURLInList("https://github.com/", url) ||
++                url.some((pattern) => getDomain(pattern) === "github.com")
++            )) {
++                return upgraded;
++            }
++            const newline = text.includes("\r\n") ? "\r\n" : "\n";
++            return upgraded.trimEnd() + [
++                "", "", "================================", "", "github.com",
++                "", "TARGET", "html", "", "MATCH", '[data-color-mode="dark"]',
++                "", "MATCH SYSTEM DARK",
++                '[data-color-mode="auto"][data-dark-theme^="dark"]',
++                "", "MATCH SYSTEM LIGHT",
++                '[data-color-mode="auto"][data-light-theme^="dark"]', ""
++            ].join(newline);
+         }
+         static async loadDetectorHints({local}) {
+             const $config = await ConfigManager.loadConfig({
+--- a/inject/index.js
++++ b/inject/index.js
+@@ -9285,6 +9285,8 @@
+     }
+ 
+     let unloaded = false;
++    // Keep this through dark-theme CLEAN_UP to recheck the next OS appearance.
++    let recheckSystemThemeHints = false;
+     const scriptId = generateUID();
+     function cleanup() {
+         unloaded = true;
+@@ -9336,6 +9338,20 @@
+             return;
+         }
+         logInfoCollapsed(`onMessage[${message.type}]`, message);
++        if (
++            message.type === MessageTypeBGtoCS.ADD_CSS_FILTER ||
++            message.type === MessageTypeBGtoCS.ADD_STATIC_THEME ||
++            message.type === MessageTypeBGtoCS.ADD_SVG_FILTER ||
++            message.type === MessageTypeBGtoCS.ADD_DYNAMIC_THEME
++        ) {
++            stopDarkThemeDetector();
++            recheckSystemThemeHints = Boolean(
++                message.data.detectDarkTheme &&
++                message.data.detectorHints?.some((hint) =>
++                    hint.matchSystemDark?.length || hint.matchSystemLight?.length
++                )
++            );
++        }
+         switch (message.type) {
+             case MessageTypeBGtoCS.ADD_CSS_FILTER:
+             case MessageTypeBGtoCS.ADD_STATIC_THEME: {
+@@ -9425,12 +9441,15 @@
+             }
+         });
+     }
+-    runColorSchemeChangeDetector((isDark) =>
++    runColorSchemeChangeDetector((isDark) => {
+         sendMessage({
+             type: MessageTypeCStoBG.COLOR_SCHEME_CHANGE,
+             data: {isDark}
+-        })
+-    );
++        });
++        if (recheckSystemThemeHints) {
++            sendConnectionOrResumeMessage(MessageTypeCStoBG.DOCUMENT_CONNECT);
++        }
++    });
+     chrome.runtime.onMessage.addListener(onMessage);
+     sendConnectionOrResumeMessage(MessageTypeCStoBG.DOCUMENT_CONNECT);
+     function onPageHide(e) {
