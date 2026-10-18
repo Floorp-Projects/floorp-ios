@@ -132,8 +132,8 @@ The [Upstream Sync](.github/workflows/upstream-sync.yml) workflow automates this
 
 We welcome contributions! Please feel free to submit Pull Requests or open Issues.
 
-- [Report a bug](https://github.com/Floorp-Projects/floorp-ios/issues/new?template=bug_report.md)
-- [Request a feature](https://github.com/Floorp-Projects/floorp-ios/issues/new?template=feature_request.md)
+- [Report a bug](https://github.com/Floorp-Projects/floorp-ios/issues/new?template=---bug-report.md)
+- [Request a feature](https://github.com/Floorp-Projects/floorp-ios/issues/new?template=---feature.md)
 
 ## Project Structure
 
