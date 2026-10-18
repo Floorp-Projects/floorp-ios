@@ -19,32 +19,36 @@ actor DefaultFaviconURLCache: FaviconURLCache {
     static let shared = DefaultFaviconURLCache()
     private let fileManager: URLCacheFileManager
     private var urlCache = [String: FaviconURL]()
+    private var retrievalTask: Task<Data?, Never>?
     private var preserveTask: Task<Void, Never>?
     private let preserveDebounceTime: UInt64 = 10_000_000_000 // 10 seconds
 
     init(fileManager: URLCacheFileManager = DefaultURLCacheFileManager()) {
         self.fileManager = fileManager
-
-        Task {
-            await retrieveCache()
+        retrievalTask = Task {
+            await fileManager.getURLCache()
         }
     }
 
     func getURLFromCache(cacheKey: String) async throws -> URL {
+        await retrieveCacheIfNeeded()
+
         guard let favicon = urlCache[cacheKey],
               let url = URL(string: favicon.faviconURL)
         else { throw SiteImageError.noURLInCache }
 
         // Update the element in the cache so it's time to expire is reset
-        // We don't need to wait for this to finish
-        Task {
-            await cacheURL(cacheKey: cacheKey, faviconURL: url)
-        }
+        updateCache(cacheKey: cacheKey, faviconURL: url)
 
         return url
     }
 
     func cacheURL(cacheKey: String, faviconURL: URL) async {
+        await retrieveCacheIfNeeded()
+        updateCache(cacheKey: cacheKey, faviconURL: faviconURL)
+    }
+
+    private func updateCache(cacheKey: String, faviconURL: URL) {
         let favicon = FaviconURL(cacheKey: cacheKey,
                                  faviconURL: faviconURL.absoluteString,
                                  createdAt: Date())
@@ -53,6 +57,7 @@ actor DefaultFaviconURLCache: FaviconURLCache {
     }
 
     func clearCache() async {
+        await retrieveCacheIfNeeded()
         urlCache = [String: FaviconURL]()
         preserveCache()
     }
@@ -80,8 +85,13 @@ actor DefaultFaviconURLCache: FaviconURLCache {
         return archiver.encodedData
     }
 
-    private func retrieveCache() async {
-        guard let data = await fileManager.getURLCache(),
+    private func retrieveCacheIfNeeded() async {
+        guard let retrievalTask else { return }
+        let data = await retrievalTask.value
+        guard self.retrievalTask != nil else { return }
+        self.retrievalTask = nil
+
+        guard let data,
               let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data),
               let cacheList = unarchiver.decodeDecodable([FaviconURL].self, forKey: CacheConstants.cacheKey)
         else {
