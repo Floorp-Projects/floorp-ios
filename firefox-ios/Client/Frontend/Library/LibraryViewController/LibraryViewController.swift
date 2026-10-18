@@ -11,6 +11,11 @@ enum LibraryPresentationMode: Equatable {
     case externalSwitcher
 }
 
+enum LibraryDismissalReason: Equatable {
+    case done
+    case openedContent
+}
+
 class LibraryViewController: UIViewController, Themeable {
     struct UX {
         struct NavigationMenu {
@@ -31,7 +36,7 @@ class LibraryViewController: UIViewController, Themeable {
     let windowUUID: WindowUUID
     var currentWindowUUID: UUID? { windowUUID }
     let presentationMode: LibraryPresentationMode
-    var onRequestHostDismiss: (() -> Void)?
+    var onRequestHostDismiss: ((LibraryDismissalReason) -> Void)?
 
     // Views
     private var controllerContainerView: UIView = .build { view in }
@@ -351,15 +356,15 @@ class LibraryViewController: UIViewController, Themeable {
         guard let panel = getCurrentPanel() else { return }
 
         if panel.shouldDismissOnDone() {
-            finishLibraryPresentation()
+            finishLibraryPresentation(reason: .done)
         }
 
         panel.handleRightTopButton()
     }
 
-    func finishLibraryPresentation() {
+    func finishLibraryPresentation(reason: LibraryDismissalReason) {
         if presentationMode == .externalSwitcher {
-            onRequestHostDismiss?()
+            onRequestHostDismiss?(reason)
         } else {
             dismiss(animated: true, completion: nil)
         }

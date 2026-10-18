@@ -10,13 +10,13 @@ extension LibraryViewController: LibraryPanelDelegate {
     func libraryPanelDidRequestToOpenInNewTab(_ url: URL, isPrivate: Bool) {
         delegate?.libraryPanelDidRequestToOpenInNewTab(url, isPrivate: isPrivate)
         DispatchQueue.main.async {
-            self.finishLibraryPresentation()
+            self.finishLibraryPresentation(reason: .openedContent)
         }
     }
 
     func libraryPanel(didSelectURL url: URL, visitType: VisitType) {
         delegate?.libraryPanel(didSelectURL: url, visitType: visitType)
-        finishLibraryPresentation()
+        finishLibraryPresentation(reason: .openedContent)
     }
 
     var libraryPanelWindowUUID: WindowUUID {
