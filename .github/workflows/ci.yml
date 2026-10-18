@@ -228,20 +228,20 @@ jobs:
             exit 1
           fi
 
-          for test_method in \
-            testGetURLFromCacheWithEmptyCache \
-            testGetURLFromCacheWithValuePresent \
-            testRetrieveCacheNotExpired \
-            testRetrieveCacheWithExpired \
-            testInitializationDoesNotRetainCacheWhileRetrievalIsSuspended \
-            testCacheURLPreservesNewValueAfterInitialRetrieval \
-            testClearCacheDoesNotRestoreEntriesFromInitialRetrieval; do
-            passed_count="$(grep -Fc "${test_method}]' passed" "$log_path")"
-            if [[ "$passed_count" -ne 10 ]]; then
-              echo "::error::$test_method must pass all 10 repetitions without retries (got $passed_count)"
-              exit 1
-            fi
-          done
+          results_path="$RUNNER_TEMP/favicon-cache-stability-tests.json"
+          xcrun xcresulttool get test-results tests \
+            --path "$RUNNER_TEMP/FloorpFaviconCacheStability.xcresult" \
+            --format json > "$results_path"
+          python3 scripts/ci/check-repeated-xctest-results.py \
+            --results "$results_path" \
+            --repetitions 10 \
+            --test 'SiteImageViewTests/FaviconURLCacheTests/testGetURLFromCacheWithEmptyCache()' \
+            --test 'SiteImageViewTests/FaviconURLCacheTests/testGetURLFromCacheWithValuePresent()' \
+            --test 'SiteImageViewTests/FaviconURLCacheTests/testRetrieveCacheNotExpired()' \
+            --test 'SiteImageViewTests/FaviconURLCacheTests/testRetrieveCacheWithExpired()' \
+            --test 'SiteImageViewTests/FaviconURLCacheTests/testInitializationDoesNotRetainCacheWhileRetrievalIsSuspended()' \
+            --test 'SiteImageViewTests/FaviconURLCacheTests/testCacheURLPreservesNewValueAfterInitialRetrieval()' \
+            --test 'SiteImageViewTests/FaviconURLCacheTests/testClearCacheDoesNotRestoreEntriesFromInitialRetrieval()'
 
       - name: Upload favicon cache stability result
         if: always()
@@ -251,6 +251,7 @@ jobs:
           path: |
             ${{ runner.temp }}/FloorpFaviconCacheStability.xcresult
             ${{ runner.temp }}/favicon-cache-stability.log
+            ${{ runner.temp }}/favicon-cache-stability-tests.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -292,18 +293,18 @@ jobs:
             exit 1
           fi
 
-          for test_method in \
-            testActionPopupNavigationRetryYieldsToPendingInitialLoadFailure \
-            testActionPopupInitialLoadFailureSupersedesCompetingCloseAlert \
-            testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState \
-            testExtensionSurfaceNavigationWaiterIgnoresSupersededSameURLCallbacks \
-            testExtensionSurfaceNavigationWaiterReportsCurrentNavigationFailures; do
-            passed_count="$(grep -Fc "${test_method}]' passed" "$log_path")"
-            if [[ "$passed_count" -ne 10 ]]; then
-              echo "::error::$test_method must pass all 10 repetitions without retries (got $passed_count)"
-              exit 1
-            fi
-          done
+          results_path="$RUNNER_TEMP/extension-surface-stability-tests.json"
+          xcrun xcresulttool get test-results tests \
+            --path "$RUNNER_TEMP/FloorpExtensionSurfaceStability.xcresult" \
+            --format json > "$results_path"
+          python3 scripts/ci/check-repeated-xctest-results.py \
+            --results "$results_path" \
+            --repetitions 10 \
+            --test 'ClientTests/FloorpNativeWebExtensionIntegrationTests/testActionPopupNavigationRetryYieldsToPendingInitialLoadFailure()' \
+            --test 'ClientTests/FloorpNativeWebExtensionIntegrationTests/testActionPopupInitialLoadFailureSupersedesCompetingCloseAlert()' \
+            --test 'ClientTests/BrowserViewControllerWebViewDelegateTests/testCommittedExtensionOptionDownloadsPreserveSurfaceAndClearFailureState()' \
+            --test 'ClientTests/BrowserViewControllerWebViewDelegateTests/testExtensionSurfaceNavigationWaiterIgnoresSupersededSameURLCallbacks()' \
+            --test 'ClientTests/BrowserViewControllerWebViewDelegateTests/testExtensionSurfaceNavigationWaiterReportsCurrentNavigationFailures()'
 
       - name: Upload extension surface stability result
         if: always()
@@ -313,6 +314,7 @@ jobs:
           path: |
             ${{ runner.temp }}/FloorpExtensionSurfaceStability.xcresult
             ${{ runner.temp }}/extension-surface-stability.log
+            ${{ runner.temp }}/extension-surface-stability-tests.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -497,8 +499,10 @@ jobs:
           path: |
             ${{ runner.temp }}/build.log
             ${{ runner.temp }}/extension-surface-stability.log
+            ${{ runner.temp }}/extension-surface-stability-tests.json
             ${{ runner.temp }}/FloorpExtensionSurfaceStability.xcresult
             ${{ runner.temp }}/favicon-cache-stability.log
+            ${{ runner.temp }}/favicon-cache-stability-tests.json
             ${{ runner.temp }}/FloorpFaviconCacheStability.xcresult
             ${{ runner.temp }}/test.log
             ${{ runner.temp }}/ubol-production-host.log
