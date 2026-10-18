@@ -18,7 +18,7 @@ NODE_TEST = Path(__file__).with_name("darkreader_github_theme_detection_test.mjs
 
 
 class DarkReaderGitHubThemeDetectionTests(unittest.TestCase):
-    def test_system_and_site_themes_detect_only_dark_github_pages(self) -> None:
+    def test_local_and_remote_site_themes_detect_only_dark_github_pages(self) -> None:
         node = shutil.which("node")
         if node is None:
             self.skipTest("Node.js is required for the theme detection harness")

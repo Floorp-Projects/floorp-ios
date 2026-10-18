@@ -2217,3 +2217,52 @@
                  stopDetectingUsingHint();
                  success();
                  return true;
+--- a/background/index.js
++++ b/background/index.js
+@@ -4123,6 +4123,35 @@
+             ConfigManager.raw.darkSites = sites;
+             ConfigManager.handleDarkSites();
+         }
++        static upgradeGitHubDetectorHints(text) {
++            if (typeof text !== "string") {
++                return text;
++            }
++            return text.split(/(^[ \t]*={2,}[ \t]*\r?$)/gm).map((block) => {
++                const hints = parseDetectorHints(block);
++                const hint = hints[0];
++                const commands = block.split(/\r?\n/).filter((line) =>
++                    /^[A-Z]+(\s[A-Z]+){0,2}$/.test(line)
++                );
++                if (
++                    hints.length !== 1 || hint.url.length !== 1 ||
++                    hint.url[0] !== "github.com" || hint.target !== "html" ||
++                    hint.match?.length !== 1 ||
++                    hint.match[0] !== '[data-color-mode="dark"]' ||
++                    commands.join("\n") !== "TARGET\nMATCH"
++                ) {
++                    return block;
++                }
++                const newline = block.includes("\r\n") ? "\r\n" : "\n";
++                return block.trimEnd() + [
++                    "", "", "MATCH SYSTEM DARK",
++                    '[data-color-mode="auto"][data-dark-theme^="dark"]',
++                    "", "MATCH SYSTEM LIGHT",
++                    '[data-color-mode="auto"][data-light-theme^="dark"]',
++                    "", ""
++                ].join(newline);
++            }).join("");
++        }
+         static async loadDetectorHints({local}) {
+             const $config = await ConfigManager.loadConfig({
+                 name: "Detector Hints",
+@@ -4130,7 +4159,9 @@
+                 localURL: CONFIG_URLs.detectorHints.local,
+                 remoteURL: CONFIG_URLs.detectorHints.remote
+             });
+-            ConfigManager.raw.detectorHints = $config;
++            ConfigManager.raw.detectorHints = local
++                ? $config
++                : ConfigManager.upgradeGitHubDetectorHints($config);
+             ConfigManager.handleDetectorHints();
+         }
+         static async loadDynamicThemeFixes({local}) {
