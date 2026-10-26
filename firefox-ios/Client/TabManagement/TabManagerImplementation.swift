@@ -50,6 +50,7 @@ final class TabManagerImplementation: NSObject,
     }
 
     private var tabsInternalCache: (normal: [Tab], private: [Tab])?
+    private var workspaceCopyReceipts = Set<UUID>()
 
     var isDeeplinkOptimizationRefactorEnabled: Bool {
         return featureFlagsProvider.isEnabled(.deeplinkOptimizationRefactor)
@@ -955,6 +956,58 @@ final class TabManagerImplementation: NSObject,
 
     // MARK: - Save tabs
 
+    func workspaceCopyReceiptIDs() async throws -> Set<UUID> {
+        guard tabRestoreHasFinished, !isRestoringTabs else {
+            throw FloorpWorkspaceCopyError.destinationUnavailable
+        }
+        let receipts = try await tabDataStore.fetchWorkspaceCopyReceipts(windowID: windowUUID)
+        workspaceCopyReceipts.formUnion(receipts)
+        return receipts
+    }
+
+    func resolveWorkspaceCopyReceiptUncertainty() async throws {
+        guard tabRestoreHasFinished, !isRestoringTabs else {
+            throw FloorpWorkspaceCopyError.destinationUnavailable
+        }
+        let window = WindowData(id: windowUUID,
+                                activeTabId: selectedTabUUID ?? UUID(),
+                                tabData: generateTabDataForSaving(),
+                                workspaceCopyReceipts: Array(workspaceCopyReceipts))
+        await tabDataStore.saveWindowData(window: window, forced: true)
+        try await tabDataStore.resolveWorkspaceCopyReceiptUncertainty(windowID: windowUUID)
+    }
+
+    func persistWorkspaceCopy(item: FloorpWorkspaceCopyItem, localID: UUID) async throws {
+        try await persistWorkspaceCopies(entries: [FloorpWorkspaceCopyEntry(item: item, localID: localID)])
+    }
+
+    func persistWorkspaceCopies(entries: [FloorpWorkspaceCopyEntry]) async throws {
+        guard tabRestoreHasFinished, !isRestoringTabs, let firstID = entries.first?.localID else {
+            throw FloorpWorkspaceCopyError.destinationUnavailable
+        }
+        let localIDs = Set(entries.map(\.localID))
+        let privateIDs = Set(privateTabs.compactMap { UUID(uuidString: $0.tabUUID) })
+        guard localIDs.count == entries.count, localIDs.isDisjoint(with: privateIDs) else {
+            throw FloorpWorkspaceCopyError.persistenceUnavailable
+        }
+        let urls = entries.compactMap { URL(string: $0.item.url) }
+        guard urls.count == entries.count else { throw FloorpWorkspaceCopyError.destinationUnavailable }
+        for (entry, url) in zip(entries, urls) where getTabForUUID(uuid: entry.localID.uuidString) == nil {
+            let tab = Tab(profile: profile, isPrivate: false, windowUUID: windowUUID)
+            tab.tabUUID = entry.localID.uuidString
+            tab.screenshotUUID = entry.localID
+            tab.lastTitle = entry.item.title
+            configureTab(tab, request: URLRequest(url: url), flushToDisk: false, zombie: true)
+        }
+        workspaceCopyReceipts.formUnion(localIDs)
+        let window = WindowData(id: windowUUID,
+                                activeTabId: selectedTabUUID ?? firstID,
+                                tabData: generateTabDataForSaving(),
+                                workspaceCopyReceipts: Array(workspaceCopyReceipts))
+        try await tabDataStore.saveWindowDataDurably(window: window, workspaceCopyReceipts: localIDs)
+        windowManager.performMultiWindowAction(.saveSimpleTabs)
+    }
+
     func preserveTabs(immediate: Bool) {
         // Only preserve tabs after the restore has finished
         guard tabRestoreHasFinished else { return }
@@ -968,7 +1021,8 @@ final class TabManagerImplementation: NSObject,
             // FIXME FXIOS-10059 TabManagerImplementation's preserveTabs is called with a nil selectedTab
             let windowData = WindowData(id: windowUUID,
                                         activeTabId: self.selectedTabUUID ?? UUID(),
-                                        tabData: self.generateTabDataForSaving())
+                                        tabData: self.generateTabDataForSaving(),
+                                        workspaceCopyReceipts: Array(self.workspaceCopyReceipts))
             await tabDataStore.saveWindowData(window: windowData, forced: forced)
 
             // Save simple tabs, used by widget extension
@@ -1488,7 +1542,8 @@ extension TabManagerImplementation: WindowSimpleTabsProvider {
         // FIXME possibly also related FXIOS-10059 TabManagerImplementation's preserveTabs is called with a nil selectedTab
         let windowData = WindowData(id: windowUUID,
                                     activeTabId: self.selectedTabUUID ?? UUID(),
-                                    tabData: self.generateTabDataForSaving())
+                                    tabData: self.generateTabDataForSaving(),
+                                    workspaceCopyReceipts: Array(self.workspaceCopyReceipts))
         return SimpleTab.convertToSimpleTabs(windowData.tabData)
     }
 }

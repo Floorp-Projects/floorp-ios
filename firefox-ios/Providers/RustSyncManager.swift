@@ -41,6 +41,43 @@ public protocol FloorpNotesSyncEngineProviding: AnyObject, Sendable {
     func invalidate()
 }
 
+public protocol FloorpWorkspaceSyncEngineProviding: AnyObject, Sendable {
+    func prepare(accountID: String) throws -> UInt64
+    func didFinishSync(successful: Bool, status: ServiceStatus, generation: UInt64)
+    func suspend()
+    func clear() throws
+}
+
+final class FloorpWorkspaceSyncExecutionContext: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: ((any FloorpWorkspaceSyncEngineProviding), UInt64)?
+    private var standardPreferenceUpdatesAllowed = true
+
+    static func isWorkspaceOnly(_ params: SyncParams) -> Bool {
+        guard case .some(let engines) = params.engines, !engines.isEmpty else { return false }
+        return engines.allSatisfy { $0 == "floorp-workspaces" }
+    }
+
+    func recordPreferencePolicy(workspaceOnly: Bool) {
+        lock.withLock { standardPreferenceUpdatesAllowed = !workspaceOnly }
+    }
+
+    var allowsStandardPreferenceUpdates: Bool { lock.withLock { standardPreferenceUpdatesAllowed } }
+
+    func record(provider: any FloorpWorkspaceSyncEngineProviding, generation: UInt64) {
+        lock.withLock { request = (provider, generation) }
+    }
+
+    func finish(_ result: SyncResult) {
+        guard let request = lock.withLock({ self.request }) else { return }
+        request.0.didFinishSync(
+            successful: result.successful.contains("floorp-workspaces"),
+            status: result.status,
+            generation: request.1
+        )
+    }
+}
+
 struct FloorpNotesSyncRequestPolicy: Equatable, Sendable {
     let compiledEvidenceAllows: Bool
     let runtimeKillSwitchAllows: Bool
@@ -118,22 +155,32 @@ enum FloorpNotesSyncEngineSelection {
     struct Partition: Equatable, Sendable {
         let togglable: [RustSyncManagerAPI.TogglableEngine]
         let requestsFloorpPrefs: Bool
+        let requestsFloorpWorkspaces: Bool
+
+        var additionalFloorpEngines: [String] {
+            (requestsFloorpPrefs ? [FloorpNotesSyncEngineSelection.engineName] : [])
+                + (requestsFloorpWorkspaces ? ["floorp-workspaces"] : [])
+        }
     }
 
     static func partition(requested: [String]) -> Partition {
         var seen = Set<String>()
         var togglable = [RustSyncManagerAPI.TogglableEngine]()
         var requestsFloorpPrefs = false
+        var requestsFloorpWorkspaces = false
         for name in requested where seen.insert(name).inserted {
             if name == engineName {
                 requestsFloorpPrefs = true
+            } else if name == "floorp-workspaces" {
+                requestsFloorpWorkspaces = true
             } else if let engine = RustSyncManagerAPI.TogglableEngine(rawValue: name) {
                 togglable.append(engine)
             }
         }
         return Partition(
             togglable: togglable,
-            requestsFloorpPrefs: requestsFloorpPrefs
+            requestsFloorpPrefs: requestsFloorpPrefs,
+            requestsFloorpWorkspaces: requestsFloorpWorkspaces
         )
     }
 
@@ -202,6 +249,9 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     private var notificationCenter: NotificationProtocol
     private var syncBackOffTimer: Timer?
     private let syncBackOffDelay = 180.0 // 3 Minutes
+    private let floorpWorkspaceStateLock = NSRecursiveLock()
+    private var floorpWorkspaceEngineProvider: (any FloorpWorkspaceSyncEngineProviding)?
+    private var floorpWorkspaceEnabled = true
     private var floorpNotesEngineProvider: (any FloorpNotesSyncEngineProviding)?
     private var floorpNotesAccountID: String?
     private let floorpNotesStateLock = NSRecursiveLock()
@@ -423,6 +473,72 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
     private func resetUserSyncPreferences() {
         profile?.prefs.setBool(false, forKey: PrefsKeys.Sync.signedInFxaAccount)
         profile?.prefs.setInt(0, forKey: PrefsKeys.Sync.numberOfSyncedDevices)
+    }
+
+    public func installFloorpWorkspaceSyncEngineProvider(
+        _ provider: any FloorpWorkspaceSyncEngineProviding
+    ) {
+        syncManagerAPI.synchronizeComponentStateAndWait { [self] in
+            floorpWorkspaceStateLock.withLock {
+                floorpWorkspaceEngineProvider?.suspend()
+                floorpWorkspaceEngineProvider = provider
+            }
+        }
+    }
+
+    public func setFloorpWorkspaceDiscoveryEnabled(_ enabled: Bool) {
+        let provider = floorpWorkspaceStateLock.withLock {
+            floorpWorkspaceEnabled = enabled
+            if !enabled { floorpWorkspaceEngineProvider?.suspend() }
+            return floorpWorkspaceEngineProvider
+        }
+        guard !enabled, let provider else { return }
+        syncManagerAPI.synchronizeComponentState { [weak self] in
+            guard let self else { return }
+            self.floorpWorkspaceStateLock.withLock {
+                guard !self.floorpWorkspaceEnabled,
+                      self.floorpWorkspaceEngineProvider === provider else { return }
+                try? provider.clear()
+            }
+        }
+    }
+
+    public func loadFloorpWorkspaceCache(accountID: String) {
+        syncManagerAPI.synchronizeComponentState { [weak self] in
+            guard let self else { return }
+            self.floorpWorkspaceStateLock.withLock {
+                guard self.floorpWorkspaceEnabled,
+                      self.activeSyncLifecycleGeneration() != nil else { return }
+                _ = try? self.floorpWorkspaceEngineProvider?.prepare(accountID: accountID)
+            }
+        }
+    }
+
+    private func prepareFloorpWorkspaceParams(
+        _ params: SyncParams,
+        accountID: String?,
+        context: FloorpWorkspaceSyncExecutionContext?
+    ) -> SyncParams? {
+        guard case .some(let engines) = params.engines,
+              engines.contains("floorp-workspaces") else { return params }
+        let allowed = floorpWorkspaceStateLock.withLock { () -> Bool in
+            guard floorpWorkspaceEnabled, let accountID,
+                  let provider = floorpWorkspaceEngineProvider else { return false }
+            do {
+                let generation = try provider.prepare(accountID: accountID)
+                context?.record(provider: provider, generation: generation)
+                return true
+            } catch {
+                provider.suspend()
+                return false
+            }
+        }
+        if allowed { return params }
+        let remaining = engines.filter { $0 != "floorp-workspaces" }
+        guard !remaining.isEmpty else { return nil }
+        var filtered = params
+        filtered.engines = .some(engines: remaining)
+        return filtered
     }
 
     private func floorpNotesPolicy(accountID: String) -> FloorpNotesSyncRequestPolicy {
@@ -851,6 +967,7 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
             removal.fill(Maybe(failure: AccountRemovalError()))
             return removal
         }
+        floorpWorkspaceStateLock.withLock { floorpWorkspaceEngineProvider?.suspend() }
         endTimedSyncs()
         syncBackOffTimer?.invalidate()
         syncBackOffTimer = nil
@@ -859,6 +976,9 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
             ?? RustFirefoxAccounts.shared.userProfile?.uid
         syncManagerAPI.disconnectChecked(prepare: { [self] in
             do {
+                try floorpWorkspaceStateLock.withLock {
+                    try floorpWorkspaceEngineProvider?.clear()
+                }
                 try floorpNotesStateLock.withLock {
                     guard case .preparing(let provider) =
                             floorpNotesDisconnectPhase else {
@@ -1277,11 +1397,17 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         lifecycleGeneration: UInt64,
         accountID: String?,
         expectedFloorpNotesGeneration: UInt64?,
-        executionContext: FloorpNotesSyncExecutionContext
+        executionContext: FloorpNotesSyncExecutionContext,
+        workspaceContext: FloorpWorkspaceSyncExecutionContext? = nil
     ) -> SyncParams? {
         guard isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
             return nil
         }
+        guard let params = prepareFloorpWorkspaceParams(
+            params,
+            accountID: accountID,
+            context: workspaceContext
+        ) else { return nil }
         guard case .some(let engines) = params.engines,
               engines.contains(FloorpNotesSyncEngineSelection.engineName) else {
             return params
@@ -1345,12 +1471,36 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         }
     }
 
+    func prepareSyncEnablementForExecution(
+        _ params: SyncParams,
+        context: FloorpWorkspaceSyncExecutionContext
+    ) -> SyncParams {
+        let workspaceOnly = FloorpWorkspaceSyncExecutionContext.isWorkspaceOnly(params)
+        context.recordPreferencePolicy(workspaceOnly: workspaceOnly)
+        var prepared = params
+        if workspaceOnly {
+            prepared.enabledChanges = [:]
+        } else if prepared.enabledChanges.isEmpty {
+            prepared.enabledChanges = getEngineEnablementChangesForAccount()
+        }
+        return prepared
+    }
+
+    func applySyncEnginePreferences(
+        _ result: SyncResult,
+        context: FloorpWorkspaceSyncExecutionContext
+    ) {
+        guard context.allowsStandardPreferenceUpdates, let declined = result.declined else { return }
+        updateEnginePrefs(declined: declined)
+    }
+
     func doSync(
         params: SyncParams,
         lifecycleGeneration: UInt64,
         floorpNotesAccountID: String?,
         expectedFloorpNotesGeneration: UInt64?,
         floorpNotesExecutionContext: FloorpNotesSyncExecutionContext,
+        floorpWorkspaceExecutionContext: FloorpWorkspaceSyncExecutionContext = .init(),
         completion: @escaping @Sendable (SyncResult) -> Void
     ) {
         beginSyncing()
@@ -1360,13 +1510,15 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
                 self?.isCurrentSyncLifecycleGeneration(lifecycleGeneration) == true
             },
             prepareParams: { [weak self] params in
-                self?.prepareSyncParamsForExecution(
+                guard let self, let prepared = self.prepareSyncParamsForExecution(
                     params,
                     lifecycleGeneration: lifecycleGeneration,
                     accountID: floorpNotesAccountID,
                     expectedFloorpNotesGeneration: expectedFloorpNotesGeneration,
-                    executionContext: floorpNotesExecutionContext
-                )
+                    executionContext: floorpNotesExecutionContext,
+                    workspaceContext: floorpWorkspaceExecutionContext
+                ) else { return nil }
+                return self.prepareSyncEnablementForExecution(prepared, context: floorpWorkspaceExecutionContext)
             }
         ) { syncResult in
             guard self.isCurrentSyncLifecycleGeneration(lifecycleGeneration) else {
@@ -1378,6 +1530,7 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
                 completion(syncResult)
                 return
             }
+            floorpWorkspaceExecutionContext.finish(syncResult)
             // Save the persisted state
             if !syncResult.persistedState.isEmpty {
                 self.prefs
@@ -1395,9 +1548,7 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
                             category: .sync,
                             extra: ["telemetry": telemetryMessage])
 
-            if let declined = syncResult.declined {
-                self.updateEnginePrefs(declined: declined)
-            }
+            self.applySyncEnginePreferences(syncResult, context: floorpWorkspaceExecutionContext)
 
             self.endSyncing(syncResult)
             completion(syncResult)
@@ -1496,15 +1647,12 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
                             deferred.fillIfUnfilled(Maybe(failure: AccountRemovalError()))
                             return
                         }
-                        var rustEngines = standardEngines
-                        if engineSelection.requestsFloorpPrefs {
-                            rustEngines.append(FloorpNotesSyncEngineSelection.engineName)
-                        }
+                        let rustEngines = standardEngines + engineSelection.additionalFloorpEngines
                         let floorpNotesAccountID = accountManager.accountProfile()?.uid
                         let params = SyncParams(
                             reason: why,
                             engines: SyncEngineSelection.some(engines: rustEngines),
-                            enabledChanges: self.getEngineEnablementChangesForAccount(),
+                            enabledChanges: [:],
                             localEncryptionKeys: localEncryptionKeys,
                             authInfo: self.createSyncAuthInfo(key: key,
                                                               accessTokenInfo: accessTokenInfo,
@@ -1594,7 +1742,7 @@ public class RustSyncManager: NSObject, SyncManager, @unchecked Sendable {
         return syncRustEngines(
             why: why,
             engines: syncManagerAPI.rustTogglableEngines.map(\.rawValue)
-                + [FloorpNotesSyncEngineSelection.engineName]
+                + [FloorpNotesSyncEngineSelection.engineName, "floorp-workspaces"]
         ).map { $0.map { _ in () } }
     }
 

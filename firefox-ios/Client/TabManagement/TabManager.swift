@@ -115,6 +115,11 @@ protocol TabManager: AnyObject {
     ///   or can be deferred (`false`).
     func preserveTabs(immediate: Bool)
 
+    func workspaceCopyReceiptIDs() async throws -> Set<UUID>
+    func resolveWorkspaceCopyReceiptUncertainty() async throws
+    func persistWorkspaceCopy(item: FloorpWorkspaceCopyItem, localID: UUID) async throws
+    func persistWorkspaceCopies(entries: [FloorpWorkspaceCopyEntry]) async throws
+
     /// Commits the pending changes to the persistent store.
     func commitChanges()
 
@@ -135,6 +140,22 @@ protocol TabManager: AnyObject {
 }
 
 extension TabManager {
+    func workspaceCopyReceiptIDs() async throws -> Set<UUID> {
+        throw FloorpWorkspaceCopyError.persistenceUnavailable
+    }
+
+    func resolveWorkspaceCopyReceiptUncertainty() async throws {
+        throw FloorpWorkspaceCopyError.persistenceUnavailable
+    }
+
+    func persistWorkspaceCopy(item: FloorpWorkspaceCopyItem, localID: UUID) async throws {
+        throw FloorpWorkspaceCopyError.persistenceUnavailable
+    }
+
+    func persistWorkspaceCopies(entries: [FloorpWorkspaceCopyEntry]) async throws {
+        throw FloorpWorkspaceCopyError.persistenceUnavailable
+    }
+
     func selectTab(_ tab: Tab?, previous: Tab? = nil, immediatePreservation: Bool = false) {
         selectTab(tab, previous: previous, immediatePreservation: immediatePreservation)
     }

@@ -193,7 +193,7 @@ final class TabDataStoreTests: XCTestCase, @unchecked Sendable {
     func testSavingTwiceReturnsMostRecentData() async throws {
         let subject = createSubject()
         let windowData1 = createMockWindow(uuid: defaultTestTabWindowUUID)
-        let windowData2 = createMockWindow(uuid: UUID(uuidString: "ABFF60DA-D1E7-407B-AA3B-130D48B31012")!)
+        let windowData2 = createMockWindow(uuid: defaultTestTabWindowUUID)
         mockFileManager.primaryDirectoryURL = URL(string: "some/directory1")
         mockFileManager.backupDirectoryURL = URL(string: "some/directory2")
         mockFileManager.pathContents = [URL(string: "some/directory")!]
@@ -207,7 +207,7 @@ final class TabDataStoreTests: XCTestCase, @unchecked Sendable {
         try await Task.sleep(nanoseconds: sleepTime)
 
         XCTAssertEqual(fetchedWindowData?.id, windowData2.id)
-        XCTAssertEqual(fetchedWindowData?.tabData.count, windowData2.tabData.count)
+        XCTAssertEqual(fetchedWindowData?.tabData.map(\.id), windowData2.tabData.map(\.id))
     }
 
     // MARK: - Clearing Data

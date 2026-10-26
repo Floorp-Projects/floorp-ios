@@ -15,6 +15,11 @@ public protocol TabDataStore: Sendable {
     /// - Parameter window: the window data object to be saved
     func saveWindowData(window: WindowData, forced: Bool) async
 
+    func saveWindowDataDurably(window: WindowData, workspaceCopyReceipt: UUID) async throws
+    func saveWindowDataDurably(window: WindowData, workspaceCopyReceipts: Set<UUID>) async throws
+    func fetchWorkspaceCopyReceipts(windowID: UUID) async throws -> Set<UUID>
+    func resolveWorkspaceCopyReceiptUncertainty(windowID: UUID) async throws
+
     /// Erases all window data on disk
     func clearAllWindowsData() async
 
@@ -30,6 +35,30 @@ public protocol TabDataStore: Sendable {
     func removeWindowData(forUUIDs: [WindowUUID]) async
 }
 
+public enum WorkspaceCopyPersistenceError: Error {
+    case unavailable
+    case verificationFailed
+    case receiptInventoryUncertain
+}
+
+public extension TabDataStore {
+    func saveWindowDataDurably(window: WindowData, workspaceCopyReceipt: UUID) async throws {
+        try await saveWindowDataDurably(window: window, workspaceCopyReceipts: [workspaceCopyReceipt])
+    }
+
+    func saveWindowDataDurably(window: WindowData, workspaceCopyReceipts: Set<UUID>) async throws {
+        throw WorkspaceCopyPersistenceError.unavailable
+    }
+
+    func fetchWorkspaceCopyReceipts(windowID: UUID) async throws -> Set<UUID> {
+        throw WorkspaceCopyPersistenceError.unavailable
+    }
+
+    func resolveWorkspaceCopyReceiptUncertainty(windowID: UUID) async throws {
+        throw WorkspaceCopyPersistenceError.unavailable
+    }
+}
+
 public actor DefaultTabDataStore: TabDataStore {
     enum TabDataError: Error {
         case failedToFetchData
@@ -38,9 +67,12 @@ public actor DefaultTabDataStore: TabDataStore {
     private let logger: Logger
     private let fileManager: TabFileManager
     private let throttleTime: UInt64
-    private var windowDataToSave: WindowData?
-    private var nextSaveIsScheduled = false
+    private var windowDataToSave = [UUID: WindowData]()
+    private var scheduledWindowSaves = Set<UUID>()
     private let filePrefix = "window-"
+    private var workspaceCopyReceipts = [UUID: Set<UUID>]()
+    private var workspaceCopySaveBarriers = [UUID: Set<UUID>]()
+    private var uncertainWorkspaceCopyWindows = Set<UUID>()
 
     public init(logger: Logger = DefaultLogger.shared,
                 fileManager: TabFileManager = DefaultTabFileManager(),
@@ -99,8 +131,13 @@ public actor DefaultTabDataStore: TabDataStore {
             }
 
             logger.log("Successfully fetched window data", level: .debug, category: .tabs)
+            if windowData.id != uuid || windowData.workspaceCopyReceiptInventoryUncertain == true {
+                uncertainWorkspaceCopyWindows.insert(uuid)
+            }
+            workspaceCopyReceipts[uuid, default: []].formUnion(windowData.workspaceCopyReceipts ?? [])
             return windowData
         } catch {
+            uncertainWorkspaceCopyWindows.insert(uuid)
             logger.log("Error fetching window data for UUID: \(uuid) Error: \(error)", level: .warning, category: .tabs)
 
             guard let backupURL = windowURLPath(for: uuid, isBackup: true) else {
@@ -122,6 +159,7 @@ public actor DefaultTabDataStore: TabDataStore {
             }
 
             logger.log("Returned backup window data for UUID: \(uuid)", level: .debug, category: .tabs)
+            workspaceCopyReceipts[uuid, default: []].formUnion(backupWindowData.workspaceCopyReceipts ?? [])
             return backupWindowData
         }
     }
@@ -144,6 +182,9 @@ public actor DefaultTabDataStore: TabDataStore {
     // MARK: - Saving Data
 
     public func saveWindowData(window: WindowData, forced: Bool) async {
+        guard workspaceCopySaveBarriers[window.id, default: []].isSubset(of: Set(window.workspaceCopyReceipts ?? [])) else {
+            return
+        }
         guard let windowSavingPath = windowURLPath(for: window.id, isBackup: false) else {
             logger.log("Not saving window data. Could not build window saving path.",
                        level: .warning,
@@ -152,7 +193,7 @@ public actor DefaultTabDataStore: TabDataStore {
         }
 
         // Hold onto a copy of the latest window data so whenever the save happens it is using the latest
-        windowDataToSave = window
+        windowDataToSave[window.id] = includingWorkspaceCopyReceipts(in: window)
 
         if let windowDataDirectoryURL = fileManager.windowDataDirectory(isBackup: false),
            !fileManager.fileExists(atPath: windowDataDirectoryURL) {
@@ -163,20 +204,126 @@ public actor DefaultTabDataStore: TabDataStore {
                    level: .debug,
                    category: .tabs)
         if forced {
-            await writeWindowDataToFile(path: windowSavingPath)
+            writeWindowDataToFile(windowID: window.id, path: windowSavingPath)
         } else {
-            await writeWindowDataToFileWithThrottle(path: windowSavingPath)
+            writeWindowDataToFileWithThrottle(windowID: window.id, path: windowSavingPath)
         }
     }
 
-    private func createWindowDataBackup(windowPath: URL) {
-        guard let windowID = windowDataToSave?.id else {
-            logger.log("Failed to create window data backup. Window to save is nil",
-                       level: .warning,
-                       category: .tabs)
-            return
+    public func fetchWorkspaceCopyReceipts(windowID: UUID) async throws -> Set<UUID> {
+        guard !uncertainWorkspaceCopyWindows.contains(windowID) else {
+            throw WorkspaceCopyPersistenceError.receiptInventoryUncertain
         }
+        guard let path = windowURLPath(for: windowID, isBackup: false) else {
+            throw WorkspaceCopyPersistenceError.unavailable
+        }
+        if fileManager.fileExists(atPath: path) {
+            let data: WindowData
+            do {
+                guard let decoded = try fileManager.getWindowDataFromPath(path: path), decoded.id == windowID else {
+                    throw WorkspaceCopyPersistenceError.verificationFailed
+                }
+                data = decoded
+            } catch {
+                uncertainWorkspaceCopyWindows.insert(windowID)
+                throw WorkspaceCopyPersistenceError.receiptInventoryUncertain
+            }
+            guard data.workspaceCopyReceiptInventoryUncertain != true else {
+                uncertainWorkspaceCopyWindows.insert(windowID)
+                throw WorkspaceCopyPersistenceError.receiptInventoryUncertain
+            }
+            workspaceCopyReceipts[windowID, default: []].formUnion(data.workspaceCopyReceipts ?? [])
+        } else if let backup = windowURLPath(for: windowID, isBackup: true), fileManager.fileExists(atPath: backup) {
+            // An older backup cannot establish whether a copy was already committed.
+            uncertainWorkspaceCopyWindows.insert(windowID)
+            throw WorkspaceCopyPersistenceError.receiptInventoryUncertain
+        }
+        return workspaceCopyReceipts[windowID, default: []]
+    }
 
+    /// Call only after all pending copy operations targeting this window have been discarded.
+    public func resolveWorkspaceCopyReceiptUncertainty(windowID: UUID) async throws {
+        guard let path = windowURLPath(for: windowID, isBackup: false) else {
+            throw WorkspaceCopyPersistenceError.verificationFailed
+        }
+        let window: WindowData
+        if let pending = windowDataToSave[windowID] {
+            window = pending
+        } else {
+            guard let saved = try fileManager.getWindowDataFromPath(path: path), saved.id == windowID else {
+                throw WorkspaceCopyPersistenceError.verificationFailed
+            }
+            window = saved
+        }
+        let receipts = workspaceCopyReceipts[windowID, default: []].union(window.workspaceCopyReceipts ?? [])
+        let resolved = WindowData(id: window.id,
+                                  activeTabId: window.activeTabId,
+                                  tabData: window.tabData,
+                                  workspaceCopyReceipts: receipts.isEmpty ? nil : receipts.sorted {
+                                      $0.uuidString < $1.uuidString
+                                  })
+        try fileManager.writeWindowData(windowData: resolved, to: path)
+        windowDataToSave[windowID] = resolved
+        guard let verified = try fileManager.getWindowDataFromPath(path: path), verified.id == windowID,
+              verified.workspaceCopyReceiptInventoryUncertain != true,
+              receipts.isSubset(of: Set(verified.workspaceCopyReceipts ?? [])) else {
+            throw WorkspaceCopyPersistenceError.verificationFailed
+        }
+        workspaceCopyReceipts[windowID] = receipts
+        uncertainWorkspaceCopyWindows.remove(windowID)
+    }
+
+    public func saveWindowDataDurably(window: WindowData, workspaceCopyReceipt: UUID) async throws {
+        try await saveWindowDataDurably(window: window, workspaceCopyReceipts: [workspaceCopyReceipt])
+    }
+
+    public func saveWindowDataDurably(window: WindowData, workspaceCopyReceipts newReceipts: Set<UUID>) async throws {
+        let normalTabIDs = Set(window.tabData.filter { !$0.isPrivate }.map(\.id))
+        guard !newReceipts.isEmpty, newReceipts.isSubset(of: normalTabIDs) else {
+            throw WorkspaceCopyPersistenceError.verificationFailed
+        }
+        _ = try await fetchWorkspaceCopyReceipts(windowID: window.id)
+        guard workspaceCopySaveBarriers[window.id, default: []].isSubset(of: Set(window.workspaceCopyReceipts ?? [])) else {
+            throw WorkspaceCopyPersistenceError.verificationFailed
+        }
+        guard let path = windowURLPath(for: window.id, isBackup: false),
+              let directory = fileManager.windowDataDirectory(isBackup: false) else {
+            throw WorkspaceCopyPersistenceError.unavailable
+        }
+        if !fileManager.fileExists(atPath: directory) {
+            fileManager.createDirectoryAtPath(path: directory)
+        }
+        let receipts = workspaceCopyReceipts[window.id, default: []]
+            .union(window.workspaceCopyReceipts ?? [])
+            .union(newReceipts)
+        let committed = WindowData(id: window.id,
+                                   activeTabId: window.activeTabId,
+                                   tabData: window.tabData,
+                                   workspaceCopyReceipts: receipts.sorted { $0.uuidString < $1.uuidString })
+        try fileManager.writeWindowData(windowData: committed, to: path)
+        workspaceCopySaveBarriers[window.id, default: []].formUnion(receipts)
+        windowDataToSave[window.id] = committed
+        guard let verified = try fileManager.getWindowDataFromPath(path: path),
+              verified.id == window.id,
+              verified.workspaceCopyReceiptInventoryUncertain != true,
+              receipts.isSubset(of: Set(verified.workspaceCopyReceipts ?? [])),
+              newReceipts.isSubset(of: Set(verified.tabData.filter { !$0.isPrivate }.map(\.id))) else {
+            throw WorkspaceCopyPersistenceError.verificationFailed
+        }
+        workspaceCopyReceipts[window.id, default: []].formUnion(receipts)
+    }
+
+    private func includingWorkspaceCopyReceipts(in window: WindowData) -> WindowData {
+        if window.workspaceCopyReceiptInventoryUncertain == true { uncertainWorkspaceCopyWindows.insert(window.id) }
+        let receipts = workspaceCopyReceipts[window.id, default: []].union(window.workspaceCopyReceipts ?? [])
+        return WindowData(id: window.id,
+                          activeTabId: window.activeTabId,
+                          tabData: window.tabData,
+                          workspaceCopyReceipts: receipts.isEmpty ? nil : receipts.sorted { $0.uuidString < $1.uuidString },
+                          workspaceCopyReceiptInventoryUncertain: uncertainWorkspaceCopyWindows.contains(window.id) ? true : nil)
+    }
+
+    private func createWindowDataBackup(windowID: UUID, windowPath: URL) {
         guard let backupWindowSavingPath = windowURLPath(for: windowID, isBackup: true) else {
             logger.log("Failed to create window data backup. Could not create windowURLPath.",
                        level: .warning,
@@ -205,28 +352,25 @@ public actor DefaultTabDataStore: TabDataStore {
 
     // Throttles the saving of the data so that it happens every 'throttleTime' nanoseconds
     // as long as their is new data to be saved
-    private func writeWindowDataToFileWithThrottle(path: URL) async {
+    private func writeWindowDataToFileWithThrottle(windowID: UUID, path: URL) {
         // Ignore the request because a save is already scheduled to happen
-        guard !nextSaveIsScheduled else { return }
-
-        // Set the guard bool to true so no new saves can be initiated while waiting
-        nextSaveIsScheduled = true
+        guard scheduledWindowSaves.insert(windowID).inserted else { return }
 
         // Dispatch to a task so as not to block the caller
         Task {
-            // Once the throttle time has passed initiate the save and reset the bool
+            // Once the throttle time has passed initiate the save for this window
             try? await Task.sleep(nanoseconds: throttleTime)
-            nextSaveIsScheduled = false
+            scheduledWindowSaves.remove(windowID)
             if fileManager.fileExists(atPath: path) {
-                createWindowDataBackup(windowPath: path)
+                createWindowDataBackup(windowID: windowID, windowPath: path)
             }
-            await writeWindowDataToFile(path: path)
+            writeWindowDataToFile(windowID: windowID, path: path)
         }
     }
 
-    private func writeWindowDataToFile(path: URL) async {
+    private func writeWindowDataToFile(windowID: UUID, path: URL) {
         do {
-            guard let windowDataToSave = windowDataToSave else {
+            guard let windowDataToSave = windowDataToSave[windowID] else {
                 logger.log("Tried to save window data but found nil",
                            level: .fatal,
                            category: .tabs)

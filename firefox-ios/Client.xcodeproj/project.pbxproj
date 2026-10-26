@@ -24,6 +24,11 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		49CC8E284C38C71F0D075990 /* FloorpWorkspaceCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 242BEBB7A1FCFFBE0EB6D316 /* FloorpWorkspaceCopyTests.swift */; };
+		F35A0929A02472F752DF4028 /* FloorpWorkspaceDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7133979B004F57EBEE9BE452 /* FloorpWorkspaceDiscoveryTests.swift */; };
+		C806B0F433BD46F0E75AFF0E /* FloorpWorkspaceDiscoveryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F70EBE779A3FFF231F9D97 /* FloorpWorkspaceDiscoveryViewController.swift */; };
+		7D91E020773F484AC89714B8 /* FloorpWorkspaceCopyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 862103CD1064FE5FE13029EF /* FloorpWorkspaceCopyService.swift */; };
+		6DD700873D9B409AEB3DEA8B /* FloorpWorkspaceDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35DE9D0412C3927A36F95E71 /* FloorpWorkspaceDiscovery.swift */; };
 		F10A00212F50000100000001 /* FloorpAdaptiveSidebarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00202F50000100000001 /* FloorpAdaptiveSidebarUITests.swift */; };
 		F10A00222F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00232F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift */; };
 		F10A00262F50000100000001 /* FloorpBrandingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10A00272F50000100000001 /* FloorpBrandingUITests.swift */; };
@@ -2831,6 +2836,11 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		242BEBB7A1FCFFBE0EB6D316 /* FloorpWorkspaceCopyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWorkspaceCopyTests.swift; sourceTree = "<group>"; };
+		7133979B004F57EBEE9BE452 /* FloorpWorkspaceDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWorkspaceDiscoveryTests.swift; sourceTree = "<group>"; };
+		E5F70EBE779A3FFF231F9D97 /* FloorpWorkspaceDiscoveryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWorkspaceDiscoveryViewController.swift; sourceTree = "<group>"; };
+		862103CD1064FE5FE13029EF /* FloorpWorkspaceCopyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWorkspaceCopyService.swift; sourceTree = "<group>"; };
+		35DE9D0412C3927A36F95E71 /* FloorpWorkspaceDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpWorkspaceDiscovery.swift; sourceTree = "<group>"; };
 		F10A00202F50000100000001 /* FloorpAdaptiveSidebarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpAdaptiveSidebarUITests.swift; sourceTree = "<group>"; };
 		F10A00232F50000100000001 /* FloorpPrivateHeaderBrandingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpPrivateHeaderBrandingUITests.swift; sourceTree = "<group>"; };
 		F10A00272F50000100000001 /* FloorpBrandingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorpBrandingUITests.swift; sourceTree = "<group>"; };
@@ -16479,6 +16489,9 @@
 				CE903B062F971B0100D67401 /* FloorpNotifications.swift */,
 				CE903B072F971B0200D67401 /* FloorpStrings.swift */,
 				CE903B082F98000100D67401 /* FloorpNotes.swift */,
+				E5F70EBE779A3FFF231F9D97 /* FloorpWorkspaceDiscoveryViewController.swift */,
+				862103CD1064FE5FE13029EF /* FloorpWorkspaceCopyService.swift */,
+				35DE9D0412C3927A36F95E71 /* FloorpWorkspaceDiscovery.swift */,
 				F10A00012FA9000000000001 /* FloorpNotesSync.swift */,
 				F10A00292F50000100000001 /* FloorpNoteSaveCoordinator.swift */,
 				F10A00102FA9000000000001 /* FloorpAdaptivePanelPresentation.swift */,
@@ -17698,6 +17711,8 @@
 			children = (
 				CE903B0E2FB0000200D67401 /* FloorpRichTextDocumentTests.swift */,
 				CE903B0A2F98000300D67401 /* FloorpNotesTests.swift */,
+				242BEBB7A1FCFFBE0EB6D316 /* FloorpWorkspaceCopyTests.swift */,
+				7133979B004F57EBEE9BE452 /* FloorpWorkspaceDiscoveryTests.swift */,
 				CE903B102F98000900D67401 /* FloorpWebPanelRuntimeTests.swift */,
 				CE903B142F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift */,
 				CEB3A1012FA1000000D67401 /* FloorpPanelPreferencesTests.swift */,
@@ -20260,6 +20275,9 @@
 				CEC2F0ACE11D4F00BE2EC4DF /* FloorpNotifications.swift in Sources */,
 				CEC2F0ADE11D4F00BE2EC4DF /* FloorpStrings.swift in Sources */,
 				CEC2F0AE2F98000100D67401 /* FloorpNotes.swift in Sources */,
+				C806B0F433BD46F0E75AFF0E /* FloorpWorkspaceDiscoveryViewController.swift in Sources */,
+				7D91E020773F484AC89714B8 /* FloorpWorkspaceCopyService.swift in Sources */,
+				6DD700873D9B409AEB3DEA8B /* FloorpWorkspaceDiscovery.swift in Sources */,
 				F10A3F000000000000000201 /* FloorpNativeWebExtensionModels.swift in Sources */,
 				F10A3F000000000000000202 /* FloorpNativeWebExtensionAdapters.swift in Sources */,
 				F10A3F000000000000000203 /* FloorpNativeWebExtensionHost.swift in Sources */,
@@ -21111,6 +21129,8 @@
 			files = (
 				CEC2F0B42FB0000200D67401 /* FloorpRichTextDocumentTests.swift in Sources */,
 				CEC2F0B02F98000300D67401 /* FloorpNotesTests.swift in Sources */,
+				49CC8E284C38C71F0D075990 /* FloorpWorkspaceCopyTests.swift in Sources */,
+				F35A0929A02472F752DF4028 /* FloorpWorkspaceDiscoveryTests.swift in Sources */,
 				CEC2F0B62F98000900D67401 /* FloorpWebPanelRuntimeTests.swift in Sources */,
 				CEC2F0BA2F98000D00D67401 /* FloorpWebPanelWebViewSessionTests.swift in Sources */,
 				CEB3A1002FA1000000D67401 /* FloorpPanelPreferencesTests.swift in Sources */,

@@ -100,6 +100,8 @@ class AppDelegate: UIResponder,
             )
         }
 
+        FloorpWorkspaceDiscoveryCoordinator.shared.bootstrap(profile: profile)
+
         appLaunchUtil = AppLaunchUtil(profile: profile)
         appLaunchUtil?.setUpPreLaunchDependencies()
 
