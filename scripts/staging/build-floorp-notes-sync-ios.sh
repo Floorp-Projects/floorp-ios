@@ -1403,10 +1403,10 @@ release = pin.get("release", {})
 assets = pin.get("assets", {})
 expected_pin_identity = {
     "repository": "Floorp-Projects/application-services",
-    "release_tag": "floorp-ios-155.20260731050244.5",
-    "release_revision": 5,
-    "source_commit": "e1c77eb6e333ef667456504100c7b09763b8ad35",
-    "source_tree": "338e0dc010b48fb63c93892f527ce56905805344",
+    "release_tag": "floorp-ios-155.20260731050244.6",
+    "release_revision": 6,
+    "source_commit": "a859c7883820fd9db4891800801161eada561551",
+    "source_tree": "d8d362a75986a3c0bf30df21e47b9a816dc57ee1",
 }
 observed_pin_identity = {
     "repository": pin.get("repository"),
@@ -1416,7 +1416,7 @@ observed_pin_identity = {
     "source_tree": release.get("sourceTree"),
 }
 if observed_pin_identity != expected_pin_identity or release.get("immutable") is not True:
-    reject("Application Services pin is not the immutable Floorp Notes revision .5 artifact")
+    reject("Application Services pin is not the immutable Floorp Notes revision .6 artifact")
 
 artifact_projection = {
     "focus_xcframework_sha256": "FocusRustComponents.xcframework.zip",

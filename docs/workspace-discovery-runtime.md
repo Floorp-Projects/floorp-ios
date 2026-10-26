@@ -1,10 +1,18 @@
 # Workspace discovery runtime dependency
 
-Workspace discovery needs the new read-only `floorp-workspaces` engine in the
-Floorp Application Services source changes. The currently published and pinned
-`floorp-ios-155.20260731050244.5` artifact does not export this engine. Its
-release URL, checksums, and Notes release evidence have not been changed to
-claim a new release exists.
+Normal builds use the read-only `floorp-workspaces` engine from the published,
+immutable [Application Services `.6` release](https://github.com/Floorp-Projects/application-services/releases/tag/floorp-ios-155.20260731050244.6).
+The pin records release ID `423961346`, source commit
+`a859c7883820fd9db4891800801161eada561551`, tree
+`d8d362a75986a3c0bf30df21e47b9a816dc57ee1`, and the actual five asset digests.
+The matching main and Focus generated bindings, including their Metrics, are
+imported from that release's `swift-components.tar.xz`. Its Workspace
+capability is enabled in `FloorpApplicationServicesPin.json`; an environment
+override is unnecessary for ordinary builds.
+Both main and Focus generated trees were compared against the release archive,
+ignoring trailing whitespace and the final newline. Their code already matches
+the published bindings, so existing formatting is preserved. The downloaded
+archive remains byte-identical.
 
 ## Local development and simulator verification
 
@@ -55,14 +63,14 @@ runtime or a link-success claim.
 The variable must be present in the process running SwiftPM/Xcode. An Xcode
 instance launched from Finder does not inherit a terminal's exported variables.
 Do not use a local override as evidence for a distributed release, or describe
-it as the artifact recorded in the unchanged `.5` release pin.
+it as the artifact recorded in the official release pin.
 
-Without an override, the existing `.5` pin remains usable for the rest of the
-app. The package excludes the new generated binding and exposes a compatibility
-class whose constructor throws `runtimeUnavailable`. The UI displays the
-runtime dependency state. It cannot register an engine, create a cache, or
-perform a substitute transport through this compatibility path. Notes keeps its
-independent release policy and existing engine.
+Without an override, the `.6` pin includes the real generated binding and
+sets `FloorpWorkspaceRuntimeSupport.isAvailable` to `true`. The legacy
+compatibility class remains available for an explicitly selected older pin
+without the Workspace capability. Its constructor throws `runtimeUnavailable`;
+it cannot register an engine, create a cache, or perform a substitute transport.
+Notes keeps its independent release policy and existing engine.
 
 ## Publishing a compatible artifact
 
@@ -76,10 +84,10 @@ bindings. Update the checked-in release URL/checksums and
 ```
 
 The explicit capability makes the package include the real generated binding
-without a local environment override. Do not add it to the existing `.5` pin:
-that binary does not contain the required symbols. Revalidate Notes against the
-new artifact and update its reviewed evidence where required; a workspace
-capability does not authorize or disable Notes.
+without a local environment override. It is already set for `.6`; `.5` does
+not contain the required symbols and must not claim this capability. Revalidate
+Notes against each new artifact and update its reviewed candidate identity
+where required; a Workspace capability does not authorize or disable Notes.
 
 ### Importing the published release
 
@@ -128,6 +136,11 @@ the selected discovery/copy/Sync Manager/Notes tests. The manifest harness
 always tests both legacy and capable selection using isolated metadata
 fixtures; those fixtures neither download nor validate a native binary.
 
+Use a new DerivedData directory when changing between `.5`, a local override
+and `.6`. Xcode can otherwise retain a precompiled Clang module for the previous
+framework at the same copied framework path. The ordinary build validation
+uses fresh simulator and device DerivedData directories.
+
 ### Notes evidence boundary
 
 The ordinary `FloorpRelease` configuration uses `release-default`. Its Notes
@@ -144,6 +157,12 @@ those code identities to the genuine new candidate when importing it. This
 does not establish that its live Notes QA passed. Preserve historical QA
 records and obtain new candidate-bound evidence before using either strict
 enabled path. Until then, those paths must reject old or mixed evidence.
+
+The strict candidate identities now refer to the real `.6` artifact. Historical
+`.5` QA JSON remains unchanged, and the test suite separately verifies that it
+cannot authorize the new candidate. Candidate-bound authenticated Notes QA is
+still pending; updating the dependency and its code identities makes no live
+QA claim. The ordinary `release-default` Notes policy remains enabled.
 
 Native link checks, paging/version/association transport tests, Notes and
 standard Sync regressions, and Desktop-to-iPhone/iPad interoperability remain

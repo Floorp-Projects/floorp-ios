@@ -662,9 +662,9 @@ enum FloorpNotesSyncReleaseGate {
     private static let releaseDesktopCommit = "fc244eed70248796fa92ff5821c6046ecd576e7e"
     private static let releaseRuntimeCommit = "3bf9399564e59be32f92dcc1b044094881b4fb6a"
     private static let releaseRuntimeTree = "533f9fdca9bdccb7f3d2a13842be7e2375160ae5"
-    private static let releaseApplicationServicesCommit = "e1c77eb6e333ef667456504100c7b09763b8ad35"
-    private static let releaseApplicationServicesTree = "338e0dc010b48fb63c93892f527ce56905805344"
-    private static let releaseApplicationServicesTag = "floorp-ios-155.20260731050244.5"
+    private static let releaseApplicationServicesCommit = "a859c7883820fd9db4891800801161eada561551"
+    private static let releaseApplicationServicesTree = "d8d362a75986a3c0bf30df21e47b9a816dc57ee1"
+    private static let releaseApplicationServicesTag = "floorp-ios-155.20260731050244.6"
     private static let mergeCaseSetSHA256 = "c19ec1a3229b0d09aa424498471941409bc77505862e8aa278aadb3396032802"
     private static let endpointPolicySHA256 = "af96437acde3d05eb8f18dc9cc81450aa9d61703579c092b962922de8934c9ca"
     // Gecko's Base64URL encoder preserves padding for the Desktop prefs
@@ -673,11 +673,11 @@ enum FloorpNotesSyncReleaseGate {
     private static let notesPrefName = "floorp.browser.note.memos"
     private static let controlPrefName = "services.sync.prefs.sync.floorp.browser.note.memos"
     private static let applicationServicesArtifacts = [
-        "focus_xcframework_sha256": "e98e02f72db6fb24a0fd4a16872ec721858f68daa418685d3669dea5c726e3ad",
-        "mozilla_xcframework_sha256": "0b4a6ba50df36ed3d942851393e53885eff0fb22d3289d8af005839b3bb7168a",
-        "release_manifest_sha256": "fe2020a0fe91ad5bf335dc1a8cc4af4abffe729babe09737587218bfba6d5da5",
-        "sha256sums_sha256": "dba2d4a679da746fe1d5f949a6fc570f8bd318f1058b52e13e193b71caba7884",
-        "swift_components_sha256": "5a796e1bcd0d299e7882f58364cf4564dd45030aa41b8af88052da8f487e1654",
+        "focus_xcframework_sha256": "4e6ef6c18cab4e9b3118a5d198f7eb7d1958ec4616a6e56532086e3630c7ba9d",
+        "mozilla_xcframework_sha256": "08de90069071dbae4e5f0cf83f304ce59f0b3d03ef31b27cb38bf5d3a1ca457d",
+        "release_manifest_sha256": "e2b01b198f528d2971985b77b137ca17998091a7710d062e654dde2b0d8d7e3d",
+        "sha256sums_sha256": "2de8ab6d1bdf1f0ce8b903441b202f09ae39ce40fd3c8d6f3654f6f4fb7769ff",
+        "swift_components_sha256": "54ce552cce52a2847706893d38f30a186d92c6aedd7052a3181092f07dc6e7f3",
     ]
     private static let fxaHosts = [
         "accounts.firefox.com",
