@@ -66,12 +66,12 @@ copies when enabled. Copies are not a promise that URLs stay on the device.
 See `workspace-discovery-validation.md` for the current local evidence and the
 remaining release acceptance.
 
-The existing immutable `.5` Application Services release does not contain this
-engine. The default dependency remains buildable but reports workspace runtime
-unavailability; it never substitutes another collection or transport. Use the
-real developer XCFramework described in `workspace-discovery-runtime.md` to
-exercise the feature. Production activation requires a genuine compatible
-release, matching generated bindings, verified assets and an updated pin.
+The default dependency is the published immutable `.6` Application Services
+release, with the Workspace capability enabled in its pin. Its assets and
+matching generated bindings are verified; ordinary builds use the real engine
+without a local override. The older `.5` binary lacks this engine and is tested
+only through the explicit legacy compatibility path. See
+`workspace-discovery-runtime.md` for dependency verification and developer builds.
 
 Run focused checks from the iOS repository:
 
