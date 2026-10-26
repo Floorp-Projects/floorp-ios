@@ -3019,6 +3019,28 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
         )
     }
 
+    func testCompiledEvidenceRejectsHistoricalApplicationServicesAfterCandidateChanges() throws {
+        let fixture = notesSyncRepositoryRoot()
+            .appendingPathComponent("scripts/ci/fixtures/floorp-notes-sync-g1-g5-valid.json")
+        var root = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [String: Any]
+        )
+        let inputs = try XCTUnwrap(root["release_inputs"] as? [String: Any])
+        let historical = try XCTUnwrap(inputs["application_services"] as? [String: Any])
+        guard try canonicalEvidenceData(historical) != canonicalEvidenceData(activeApplicationServicesInput()) else {
+            throw XCTSkip("The active candidate still matches the historical Application Services fixture")
+        }
+        try bindSyntheticArtifactProvenance(&root)
+        let evidence = try canonicalEvidenceData(root)
+        XCTAssertFalse(
+            FloorpNotesSyncReleaseGate.allowsCompiledEvidence(
+                try compiledConfiguration(evidence: evidence, root: root),
+                evidenceData: evidence,
+                now: try releaseEvidenceTrustedNow()
+            )
+        )
+    }
+
     private func compiledConfiguration(
         evidence: Data,
         root: [String: Any],
@@ -3056,11 +3078,7 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
     private func compiledEvidenceFixture(
         named name: String
     ) throws -> (Data, [String: Any]) {
-        var repositoryRoot = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 {
-            repositoryRoot.deleteLastPathComponent()
-        }
-        let url = repositoryRoot
+        let url = notesSyncRepositoryRoot()
             .appendingPathComponent("scripts/ci/fixtures", isDirectory: true)
             .appendingPathComponent(name)
             .appendingPathExtension("json")
@@ -3069,9 +3087,63 @@ final class FloorpNotesSyncEngineSelectionTests: XCTestCase {
             JSONSerialization.jsonObject(with: fixtureData) as? [String: Any]
         )
         XCTAssertEqual(fixtureData, try canonicalEvidenceData(root))
+        try bindSyntheticApplicationServicesCandidate(&root)
         try bindSyntheticArtifactProvenance(&root)
         let evidence = try canonicalEvidenceData(root)
         return (evidence, root)
+    }
+
+    private func notesSyncRepositoryRoot() -> URL {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            root.deleteLastPathComponent()
+        }
+        return root
+    }
+
+    private func activeApplicationServicesInput() throws -> [String: Any] {
+        let path = notesSyncRepositoryRoot()
+            .appendingPathComponent("MozillaRustComponents/FloorpApplicationServicesPin.json")
+        let pin = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any])
+        let release = try XCTUnwrap(pin["release"] as? [String: Any])
+        let assets = try XCTUnwrap(pin["assets"] as? [String: [String: Any]])
+        let projection = [
+            "focus_xcframework_sha256": "FocusRustComponents.xcframework.zip",
+            "mozilla_xcframework_sha256": "MozillaRustComponents.xcframework.zip",
+            "release_manifest_sha256": "release-manifest.json",
+            "sha256sums_sha256": "SHA256SUMS",
+            "swift_components_sha256": "swift-components.tar.xz",
+        ]
+        var artifacts = [String: String]()
+        for (name, asset) in projection {
+            artifacts[name] = try XCTUnwrap(assets[asset]?["sha256"] as? String)
+        }
+        return [
+            "repository": try XCTUnwrap(pin["repository"] as? String),
+            "release_tag": try XCTUnwrap(release["tag"] as? String),
+            "source_sha": try XCTUnwrap(release["sourceCommit"] as? String),
+            "tree_sha": try XCTUnwrap(release["sourceTree"] as? String),
+            "artifacts": artifacts,
+        ]
+    }
+
+    private func bindSyntheticApplicationServicesCandidate(_ root: inout [String: Any]) throws {
+        // Only the in-memory unit fixture is rebound; this is not live QA evidence.
+        let services = try activeApplicationServicesInput()
+        let artifacts = try XCTUnwrap(services["artifacts"] as? [String: String])
+        var inputs = try XCTUnwrap(root["release_inputs"] as? [String: Any])
+        inputs["application_services"] = services
+        root["release_inputs"] = inputs
+        var gates = try XCTUnwrap(root["gates"] as? [String: [String: Any]])
+        gates["g2"]?["application_services"] = services
+        if gates["g5"] != nil {
+            gates["g5"]?["application_services"] = [
+                "source_sha": try XCTUnwrap(services["source_sha"] as? String),
+                "release_tag": try XCTUnwrap(services["release_tag"] as? String),
+                "mozilla_xcframework_sha256": try XCTUnwrap(artifacts["mozilla_xcframework_sha256"]),
+            ]
+        }
+        root["gates"] = gates
     }
 
     private func bindSyntheticArtifactProvenance(

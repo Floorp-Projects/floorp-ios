@@ -15,6 +15,13 @@ final class MockTabDataStore: TabDataStore, @unchecked Sendable {
     var clearAllWindowsDataCalled = 0
     var removeWindowDataCalled = 0
     private var persistedTabWindowUUIDs: [UUID] = []
+    var durableWorkspaceCopyWindows: [WindowData] = []
+    var committedWorkspaceCopyReceipts = Set<UUID>()
+    var failWorkspaceCopySaves = false
+
+    enum WorkspaceCopySaveError: Error {
+        case injectedFailure
+    }
 
     func fetchWindowDataUUIDs() -> [UUID] {
         return persistedTabWindowUUIDs
@@ -29,6 +36,21 @@ final class MockTabDataStore: TabDataStore, @unchecked Sendable {
         saveWindowDataCalledCount += 1
         saveWindowDataForcedValue = forced
         saveWindowData = window
+    }
+
+    func saveWindowDataDurably(window: WindowData, workspaceCopyReceipt: UUID) async throws {
+        try await saveWindowDataDurably(window: window, workspaceCopyReceipts: [workspaceCopyReceipt])
+    }
+
+    func saveWindowDataDurably(window: WindowData, workspaceCopyReceipts: Set<UUID>) async throws {
+        durableWorkspaceCopyWindows.append(window)
+        if failWorkspaceCopySaves { throw WorkspaceCopySaveError.injectedFailure }
+        committedWorkspaceCopyReceipts.formUnion(workspaceCopyReceipts)
+        committedWorkspaceCopyReceipts.formUnion(window.workspaceCopyReceipts ?? [])
+    }
+
+    func fetchWorkspaceCopyReceipts(windowID: UUID) async throws -> Set<UUID> {
+        committedWorkspaceCopyReceipts
     }
 
     func clearAllWindowsData() async {

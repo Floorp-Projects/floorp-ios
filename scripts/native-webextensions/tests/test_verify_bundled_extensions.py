@@ -2588,10 +2588,9 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
     def test_rejects_testflight_metadata_different_from_reviewed_template(self) -> None:
         metadata = self.testflight_root / "WhatToTest.en-US.txt"
         original = metadata.read_text(encoding="utf-8")
-        changed = original.replace(
-            "Runtime fixes and native WebExtensions candidate",
-            "Runtime fixes and native WebExtensions test",
-        )
+        heading, remainder = original.split("\n", 1)
+        self.assertTrue(heading)
+        changed = f"{heading} (unreviewed)\n{remainder}"
         self.assertNotEqual(changed, original)
         metadata.write_text(changed, encoding="utf-8")
 

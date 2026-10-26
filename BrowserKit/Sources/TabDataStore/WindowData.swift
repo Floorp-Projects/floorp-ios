@@ -8,6 +8,10 @@ public struct WindowData: Codable, Sendable {
     public let id: UUID
     public let activeTabId: UUID
     public let tabData: [TabData]
+    /// Account-free copy receipts remain after a copied tab closes. New snapshots
+    /// carry these forward so an older queued save cannot erase a committed copy.
+    public let workspaceCopyReceipts: [UUID]?
+    public let workspaceCopyReceiptInventoryUncertain: Bool?
 
     /// Providing default values for id and isPrimary for now
     /// This will change when multi-window support is added
@@ -18,9 +22,13 @@ public struct WindowData: Codable, Sendable {
     ///   - tabData: a list of all tabs associated with the window
     public init(id: UUID,
                 activeTabId: UUID,
-                tabData: [TabData]) {
+                tabData: [TabData],
+                workspaceCopyReceipts: [UUID]? = nil,
+                workspaceCopyReceiptInventoryUncertain: Bool? = nil) {
         self.id = id
         self.activeTabId = activeTabId
         self.tabData = tabData
+        self.workspaceCopyReceipts = workspaceCopyReceipts
+        self.workspaceCopyReceiptInventoryUncertain = workspaceCopyReceiptInventoryUncertain
     }
 }

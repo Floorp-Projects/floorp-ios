@@ -49,10 +49,55 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         self.fake_developer_dir = self.fake_xcode_app / "Contents/Developer"
         self._prepare_fake_toolchain()
         self._prepare_source_tree()
+        self.candidate_fixtures = self.root / "synthetic-candidate-evidence"
+        self.candidate_fixtures.mkdir()
         self.run_index = 0
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def candidate_fixture(self, name):
+        """Project a unit fixture onto the active pin without changing historical evidence."""
+        evidence = json.loads((FIXTURES / name).read_text())
+        pin = json.loads((self.repository / "MozillaRustComponents/FloorpApplicationServicesPin.json").read_text())
+        projection = {
+            "focus_xcframework_sha256": "FocusRustComponents.xcframework.zip",
+            "mozilla_xcframework_sha256": "MozillaRustComponents.xcframework.zip",
+            "release_manifest_sha256": "release-manifest.json",
+            "sha256sums_sha256": "SHA256SUMS",
+            "swift_components_sha256": "swift-components.tar.xz",
+        }
+        services = {
+            "repository": pin["repository"],
+            "release_tag": pin["release"]["tag"],
+            "source_sha": pin["release"]["sourceCommit"],
+            "tree_sha": pin["release"]["sourceTree"],
+            "artifacts": {key: pin["assets"][asset]["sha256"] for key, asset in projection.items()},
+        }
+        inputs = evidence["release_inputs"]
+        inputs["application_services"] = services
+        gates = evidence["gates"]
+        gates["g2"]["application_services"] = services
+        if "g5" in gates:
+            gates["g5"]["application_services"] = {
+                "source_sha": services["source_sha"],
+                "release_tag": services["release_tag"],
+                "mozilla_xcframework_sha256": services["artifacts"]["mozilla_xcframework_sha256"],
+            }
+        required = ["g1", "g2", "g3", "g4"]
+        if evidence["build_contract_mode"] == "release-enabled":
+            required.append("g5")
+        digest_key = "g1_g4_digest_sha256" if len(required) == 4 else "g1_g5_digest_sha256"
+        evidence[digest_key] = hashlib.sha256(self._canonical({
+            "gates": {name: gates[name] for name in required}, "release_inputs": inputs,
+        })).hexdigest()
+        evidence["same_release_key_sha256"] = hashlib.sha256(self._canonical({
+            "gate_artifact_digests": {name: value["artifact"]["sha256"] for name, value in gates.items()},
+            "release_inputs": inputs,
+        })).hexdigest()
+        path = self.candidate_fixtures / name
+        path.write_bytes(self._canonical(evidence))
+        return path
 
     def prepare_local_source_evidence(self, mode="release-enabled"):
         fixture = (
@@ -60,7 +105,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
             if mode == "production-qa"
             else "floorp-notes-sync-g1-g5-valid.json"
         )
-        evidence = json.loads((FIXTURES / fixture).read_text())
+        evidence = json.loads(self.candidate_fixture(fixture).read_text())
         directory = self.root / f"local-evidence-{self.run_index + 1}"
         artifacts = directory / "artifacts"
         result_bundle = artifacts / "FloorpNotesSync.xcresult"
@@ -892,14 +937,14 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         if mode == "production-qa":
             arguments += [
                 "--evidence",
-                str(FIXTURES / "floorp-notes-sync-g1-g4-production-qa-valid.json"),
+                str(self.candidate_fixture("floorp-notes-sync-g1-g4-production-qa-valid.json")),
                 "--validation-clock-manifest",
                 str(FIXTURES / "validation-clock-valid.json"),
             ]
         elif mode == "release-enabled":
             arguments += [
                 "--evidence",
-                str(FIXTURES / "floorp-notes-sync-g1-g5-valid.json"),
+                str(self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json")),
                 "--validation-clock-manifest",
                 str(FIXTURES / "validation-clock-valid.json"),
             ]
@@ -980,7 +1025,9 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         self.assertRegex(manifest["evidence"]["clock_manifest_sha256"], r"^[0-9a-f]{64}$")
         self.assertEqual(
             manifest["evidence"]["embedded_digest_sha256"],
-            "5b8647133fb7ee9a7807e1b91c0b6fd9c4595146be668fad765f5686c3005c87",
+            json.loads(self.candidate_fixture("floorp-notes-sync-g1-g4-production-qa-valid.json").read_text())[
+                "g1_g4_digest_sha256"
+            ],
         )
         self.assertRegex(manifest["endpoint_authority"]["matrix_sha256"], r"^[0-9a-f]{64}$")
         self.assertFalse(str(manifest["contract_inputs"]["xcconfig_path"]).startswith(str(self.repository)))
@@ -1179,10 +1226,10 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
 
     def test_fake_validator_cannot_bypass_exact_embedded_gate_sets(self):
         release = json.loads(
-            (FIXTURES / "floorp-notes-sync-g1-g5-valid.json").read_text()
+            (self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json")).read_text()
         )
         production = json.loads(
-            (FIXTURES / "floorp-notes-sync-g1-g4-production-qa-valid.json").read_text()
+            (self.candidate_fixture("floorp-notes-sync-g1-g4-production-qa-valid.json")).read_text()
         )
         cases = (
             ("release-enabled", release, "g6", {"status": "passed"}),
@@ -1457,13 +1504,15 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         self.assertEqual(
             manifest["release_inputs"]["ios"],
             json.loads(
-                (FIXTURES / "floorp-notes-sync-g1-g5-valid.json").read_text()
+                (self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json")).read_text()
             )["release_inputs"]["ios"],
         )
         self.assertEqual(manifest["paths"]["archive"], str(archive.resolve()))
         self.assertEqual(
             manifest["evidence"]["embedded_digest_sha256"],
-            "5cb92f3caab88b18a099f971644bb4217d7e83b2c0716fec6b55683307dd9023",
+            json.loads(self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json").read_text())[
+                "g1_g5_digest_sha256"
+            ],
         )
         self.assertEqual(manifest["build"]["xcode_version"], ["Xcode 26.0", "Build version 17A100"])
         self.assertEqual(manifest["build"]["build_number"], EVIDENCE_BUILD_NUMBER)
@@ -1520,14 +1569,14 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
 
     def test_release_disabled_rejects_evidence_inputs(self):
         result, _, _, xcode_record, _ = self.run_script(
-            extra=["--evidence", str(FIXTURES / "floorp-notes-sync-g1-g5-valid.json")]
+            extra=["--evidence", str(self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json"))]
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("release-disabled", result.stderr)
         self.assertFalse(xcode_record.exists())
 
     def test_missing_g5_fails_even_when_validator_returns_success(self):
-        evidence = json.loads((FIXTURES / "floorp-notes-sync-g1-g5-valid.json").read_text())
+        evidence = json.loads((self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json")).read_text())
         del evidence["gates"]["g5"]
         path = self.root / "missing-g5.json"
         path.write_text(json.dumps(evidence))
@@ -1590,7 +1639,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         for field, value in mutations.items():
             with self.subTest(field=field):
                 evidence = json.loads(
-                    (FIXTURES / "floorp-notes-sync-g1-g5-valid.json").read_text()
+                    (self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json")).read_text()
                 )
                 evidence["release_inputs"]["ios"][field] = value
                 path = self.root / f"wrong-ios-{field}.json"
@@ -1619,7 +1668,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         for field, value in mutations:
             with self.subTest(field=field):
                 evidence = json.loads(
-                    (FIXTURES / "floorp-notes-sync-g1-g5-valid.json").read_text()
+                    (self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json")).read_text()
                 )
                 target = evidence["release_inputs"]["application_services"]
                 parts = field.split(".")
@@ -1638,11 +1687,48 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
                 self.assertIn("application services", result.stderr.lower())
                 self.assertFalse(xcode_record.exists())
 
+    def test_historical_application_services_evidence_is_rejected_after_candidate_changes(self):
+        historical_path = FIXTURES / "floorp-notes-sync-g1-g5-valid.json"
+        historical = json.loads(historical_path.read_text())["release_inputs"]["application_services"]
+        candidate = json.loads(self.candidate_fixture(historical_path.name).read_text())
+        if historical == candidate["release_inputs"]["application_services"]:
+            self.skipTest("The active candidate still matches the historical Application Services fixture")
+        result, manifest, _, xcode_record, _ = self.run_script(
+            "release-enabled", extra=["--evidence", str(historical_path)]
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("application services", result.stderr.lower())
+        self.assertFalse(manifest.exists())
+        self.assertFalse(xcode_record.exists())
+
+    def test_synthetic_candidate_projection_preserves_historical_fixture_bytes(self):
+        historical_path = FIXTURES / "floorp-notes-sync-g1-g5-valid.json"
+        original = historical_path.read_bytes()
+        pin_path = self.repository / "MozillaRustComponents/FloorpApplicationServicesPin.json"
+        pin = json.loads(pin_path.read_text())
+        pin["release"]["tag"] = "floorp-ios-155.20260731050244.999"
+        pin["release"]["sourceCommit"] = "1" * 40
+        pin["release"]["sourceTree"] = "2" * 40
+        pin["assets"]["MozillaRustComponents.xcframework.zip"]["sha256"] = "3" * 64
+        pin_path.write_text(json.dumps(pin))
+        candidate = json.loads(self.candidate_fixture(historical_path.name).read_text())
+        services = candidate["release_inputs"]["application_services"]
+        self.assertEqual(services["release_tag"], pin["release"]["tag"])
+        self.assertEqual(services["source_sha"], "1" * 40)
+        self.assertEqual(services["tree_sha"], "2" * 40)
+        self.assertEqual(services["artifacts"]["mozilla_xcframework_sha256"], "3" * 64)
+        self.assertEqual(candidate["gates"]["g2"]["application_services"], services)
+        self.assertEqual(candidate["gates"]["g5"]["application_services"], {
+            "release_tag": services["release_tag"], "source_sha": services["source_sha"],
+            "mozilla_xcframework_sha256": "3" * 64,
+        })
+        self.assertEqual(historical_path.read_bytes(), original)
+
     def test_contract_inputs_are_snapshotted_before_validation_and_source_replacement(self):
         evidence = self.root / "mutable-evidence.json"
         clock = self.root / "mutable-clock.json"
         schema = self.root / "mutable-schema.json"
-        shutil.copy2(FIXTURES / "floorp-notes-sync-g1-g5-valid.json", evidence)
+        shutil.copy2(self.candidate_fixture("floorp-notes-sync-g1-g5-valid.json"), evidence)
         shutil.copy2(FIXTURES / "validation-clock-valid.json", clock)
         shutil.copy2(
             REPOSITORY / "docs/floorp-notes-sync-release-evidence.schema.json",
@@ -1988,10 +2074,7 @@ class FloorpNotesSyncBuildContractTests(unittest.TestCase):
         ):
             with self.subTest(field=field):
                 evidence = json.loads(
-                    (
-                        FIXTURES
-                        / "floorp-notes-sync-g1-g4-production-qa-valid.json"
-                    ).read_text()
+                    self.candidate_fixture("floorp-notes-sync-g1-g4-production-qa-valid.json").read_text()
                 )
                 evidence["release_inputs"]["environment"][field] = value
                 path = self.root / f"wrong-authority-{field}.json"

@@ -2197,3 +2197,77 @@ enum FloorpStrings {
         }
     }
 }
+
+extension FloorpStrings {
+    enum Workspaces {
+        static let title = localized("Title", value: "Shared workspaces")
+        static let receiveUpdates = localized("ReceiveUpdates", value: "Receive workspace updates")
+        static let untitled = localized("Untitled", value: "Untitled workspace")
+        static let tabCount = localized("TabCount", value: "Tabs: %ld")
+        static let independentCopies = localized(
+            "IndependentCopies",
+            value: "Open pages as independent copies. Changes here and changes on Desktop do not affect each " +
+                "other."
+        )
+        static let standardSyncNotice = localized(
+            "StandardSyncNotice",
+            value: "If ordinary tab sync is enabled, copied tabs may appear in Tabs from other devices."
+        )
+        static let lastReceived = localized("LastReceived", value: "Last received: %@")
+        static let signIn = localized(
+            "SignIn",
+            value: "Sign in to your Mozilla Account in Settings to see shared workspaces."
+        )
+        static let loading = localized("Loading", value: "Receiving workspaces…")
+        static let empty = localized(
+            "Empty",
+            value: "No shared workspaces. Publish a workspace from Floorp Desktop to see it here."
+        )
+        static let upToDate = localized("UpToDate", value: "Showing the latest received workspaces.")
+        static let offline = localized(
+            "Offline",
+            value: "Offline. Showing previously received workspaces; they may have changed."
+        )
+        static let failed = localized(
+            "Failed",
+            value: "Could not update workspaces. Previously received content is kept. Try refreshing."
+        )
+        static let unsupported = localized(
+            "Unsupported",
+            value: "These workspaces require a newer version of Floorp. Update the app to open copies."
+        )
+        static let notPublished = localized(
+            "NotPublished",
+            value: "No workspace collection has been published. Enable workspace sync in Floorp Desktop."
+        )
+        static let disabled = localized("Disabled", value: "Workspace updates are paused. Existing copies are kept.")
+        static let runtimeUnavailable = localized(
+            "RuntimeUnavailable",
+            value: "Workspace discovery is not available in this version of Floorp."
+        )
+        static let pinned = localized("Pinned", value: "Pinned")
+        static let discardAllPending = localized("DiscardAllPending", value: "Discard all unfinished copies")
+        static let openCopies = localized("OpenCopies", value: "Open copies")
+        static let openCount = localized("OpenCount", value: "Open copies (%ld)")
+        static let selectAll = localized("SelectAll", value: "Select all / none")
+        static let retryCopy = localized("RetryCopy", value: "Resume copy")
+        static let pendingCopy = localized("PendingCopy", value: "Resume an unfinished copy?")
+        static let copyProgress = localized("CopyProgress", value: "Saved %ld of %ld tabs")
+        static let cancelCopy = localized("CancelCopy", value: "Cancel unfinished copies")
+        static let copyFailed = localized("CopyFailed", value: "Copy could not finish")
+        static let copyFailedMessage = localized(
+            "CopyFailedMessage",
+            value: "Saved tabs have been kept. Resume to copy only the unfinished pages when this window and " +
+                "account are available."
+        )
+        static let ok = localized("OK", value: "OK")
+
+        private static func localized(_ key: String, value: String) -> String {
+            NSLocalizedString("Floorp.Workspaces.\(key).v1",
+                              tableName: "Floorp",
+                              bundle: .main,
+                              value: value,
+                              comment: "Shared workspace discovery and independent copies")
+        }
+    }
+}

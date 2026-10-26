@@ -51,6 +51,24 @@ class TabTrayCoordinator: BaseCoordinator,
         tabTrayViewController.childPanelThemes = makeChildPanelThemes()
         tabTrayViewController.delegate = self
         tabTrayViewController.navigationHandler = self
+        tabTrayViewController.onShowSharedWorkspaces = { [weak self] in self?.showSharedWorkspaces() }
+    }
+
+    private func showSharedWorkspaces() {
+        let discovery = FloorpWorkspaceDiscoveryCoordinator.shared
+        discovery.bootstrap(profile: profile)
+        let destination = FloorpWorkspaceTabCopyDestination(tabManager: tabManager) { [weak self] in
+            guard let self,
+                  let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return false }
+            return appDelegate.windowManager.windows[self.tabManager.windowUUID]?.tabManager === self.tabManager
+        }
+        let controller = FloorpWorkspaceDiscoveryViewController(coordinator: discovery,
+                                                                destination: destination) { [weak self] in
+            self?.tabTrayViewController?.dismiss(animated: true) { [weak self] in self?.didFinish() }
+        }
+        let navigation = ThemedNavigationController(rootViewController: controller, windowUUID: tabManager.windowUUID)
+        navigation.modalPresentationStyle = .pageSheet
+        tabTrayViewController?.present(navigation, animated: true)
     }
 
     func start(with tabTraySection: TabTrayPanelType) {

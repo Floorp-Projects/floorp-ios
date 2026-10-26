@@ -83,6 +83,151 @@ final class TabManagerTests: TabManagerTestsBase {
         XCTAssertTrue(delegate.webViewCreationDelegate.createdWebView === tab.webView)
     }
 
+    @MainActor
+    func testWorkspaceCopyCreatesNormalZombieTabWithPlannedIDAndDurableReceipt() async throws {
+        let privateTab = try XCTUnwrap(generateTabs(ofType: .privateAny, count: 1).first)
+        let subject = createSubject(tabs: [privateTab])
+        subject.tabRestoreHasFinished = true
+        let localID = UUID()
+        let item = FloorpWorkspaceCopyItem(url: "https://workspace-copy.invalid/page", title: "Desktop page")
+
+        try await subject.persistWorkspaceCopy(item: item, localID: localID)
+
+        let copied = try XCTUnwrap(subject.normalTabs.first)
+        XCTAssertEqual(copied.tabUUID, localID.uuidString)
+        XCTAssertEqual(copied.screenshotUUID, localID)
+        XCTAssertEqual(copied.lastTitle, item.title)
+        XCTAssertEqual(copied.url?.absoluteString, item.url)
+        XCTAssertEqual(copied.windowUUID, subject.windowUUID)
+        XCTAssertFalse(copied.isPrivate)
+        XCTAssertNil(copied.webView)
+        XCTAssertNil(subject.selectedTab)
+        XCTAssertTrue(subject.privateTabs.first === privateTab)
+        let saved = try XCTUnwrap(mockTabStore.durableWorkspaceCopyWindows.last)
+        XCTAssertEqual(saved.id, subject.windowUUID)
+        XCTAssertEqual(saved.tabData.map(\.id), [localID])
+        XCTAssertEqual(saved.tabData.first?.title, item.title)
+        XCTAssertEqual(saved.tabData.first?.siteUrl, item.url)
+        XCTAssertEqual(saved.tabData.first?.isPrivate, false)
+        XCTAssertEqual(Set(saved.workspaceCopyReceipts ?? []), [localID])
+        let receipts = try await subject.workspaceCopyReceiptIDs()
+        XCTAssertEqual(receipts, [localID])
+    }
+
+    @MainActor
+    func testWorkspaceCopyPreservesDuplicateURLTabsWithDistinctIDsAndOrder() async throws {
+        let subject = createSubject()
+        subject.tabRestoreHasFinished = true
+        let firstID = UUID()
+        let secondID = UUID()
+        let url = "https://workspace-copy.invalid/shared"
+
+        try await subject.persistWorkspaceCopy(item: FloorpWorkspaceCopyItem(url: url, title: "First"), localID: firstID)
+        try await subject.persistWorkspaceCopy(item: FloorpWorkspaceCopyItem(url: url, title: "Second"), localID: secondID)
+
+        XCTAssertEqual(subject.normalTabs.map(\.tabUUID), [firstID.uuidString, secondID.uuidString])
+        XCTAssertEqual(subject.normalTabs.map(\.lastTitle), ["First", "Second"])
+        XCTAssertEqual(subject.normalTabs.compactMap { $0.url?.absoluteString }, [url, url])
+        XCTAssertTrue(subject.normalTabs.allSatisfy { $0.webView == nil })
+        let saved = try XCTUnwrap(mockTabStore.durableWorkspaceCopyWindows.last)
+        XCTAssertEqual(saved.tabData.map(\.id), [firstID, secondID])
+        XCTAssertEqual(Set(saved.workspaceCopyReceipts ?? []), [firstID, secondID])
+    }
+
+    @MainActor
+    func testWorkspaceCopyRetryAfterSaveFailureReusesTheSameTab() async throws {
+        let subject = createSubject()
+        subject.tabRestoreHasFinished = true
+        let localID = UUID()
+        let item = FloorpWorkspaceCopyItem(url: "https://workspace-copy.invalid/retry", title: "Retry")
+        mockTabStore.failWorkspaceCopySaves = true
+        do {
+            try await subject.persistWorkspaceCopy(item: item, localID: localID)
+            XCTFail("Expected failed durable save")
+        } catch MockTabDataStore.WorkspaceCopySaveError.injectedFailure { }
+        let initial = try XCTUnwrap(subject.normalTabs.first)
+        XCTAssertEqual(subject.normalTabs.count, 1)
+        XCTAssertTrue(mockTabStore.committedWorkspaceCopyReceipts.isEmpty)
+
+        mockTabStore.failWorkspaceCopySaves = false
+        try await subject.persistWorkspaceCopy(item: item, localID: localID)
+
+        XCTAssertEqual(subject.normalTabs.count, 1)
+        XCTAssertTrue(subject.normalTabs.first === initial)
+        XCTAssertEqual(initial.tabUUID, localID.uuidString)
+        XCTAssertEqual(initial.url?.absoluteString, item.url)
+        XCTAssertEqual(initial.lastTitle, item.title)
+        XCTAssertNil(initial.webView)
+        XCTAssertEqual(mockTabStore.durableWorkspaceCopyWindows.count, 2)
+        XCTAssertEqual(mockTabStore.committedWorkspaceCopyReceipts, [localID])
+    }
+
+    @MainActor
+    func testWorkspaceBatchSavesOrderedZombieTabsAndReceiptsTogether() async throws {
+        let subject = createSubject()
+        subject.tabRestoreHasFinished = true
+        let entries = (0..<32).map {
+            let item = FloorpWorkspaceCopyItem(url: "https://workspace-copy.invalid/shared", title: "Page \($0)")
+            return FloorpWorkspaceCopyEntry(item: item, localID: UUID())
+        }
+
+        try await subject.persistWorkspaceCopies(entries: entries)
+
+        XCTAssertEqual(subject.normalTabs.map(\.tabUUID), entries.map { $0.localID.uuidString })
+        XCTAssertEqual(subject.normalTabs.map(\.lastTitle), entries.map { $0.item.title })
+        XCTAssertTrue(subject.normalTabs.allSatisfy { !$0.isPrivate && $0.webView == nil })
+        XCTAssertEqual(mockTabStore.durableWorkspaceCopyWindows.count, 1)
+        let saved = try XCTUnwrap(mockTabStore.durableWorkspaceCopyWindows.first)
+        XCTAssertEqual(saved.tabData.map(\.id), entries.map(\.localID))
+        XCTAssertEqual(Set(saved.workspaceCopyReceipts ?? []), Set(entries.map(\.localID)))
+        XCTAssertEqual(mockTabStore.committedWorkspaceCopyReceipts, Set(entries.map(\.localID)))
+    }
+
+    @MainActor
+    func testWorkspaceBatchRejectsPrivateCollisionBeforeCreatingAnyCopy() async throws {
+        let privateTab = try XCTUnwrap(generateTabs(ofType: .privateAny, count: 1).first)
+        let subject = createSubject(tabs: [privateTab])
+        subject.tabRestoreHasFinished = true
+        let item = FloorpWorkspaceCopyItem(url: "https://workspace-copy.invalid/page", title: "Page")
+        let privateID = try XCTUnwrap(UUID(uuidString: privateTab.tabUUID))
+        let entries = [FloorpWorkspaceCopyEntry(item: item, localID: UUID()),
+                       FloorpWorkspaceCopyEntry(item: item, localID: privateID)]
+        do {
+            try await subject.persistWorkspaceCopies(entries: entries)
+            XCTFail("Expected private ID collision rejection")
+        } catch FloorpWorkspaceCopyError.persistenceUnavailable { }
+        XCTAssertTrue(subject.normalTabs.isEmpty)
+        XCTAssertTrue(mockTabStore.durableWorkspaceCopyWindows.isEmpty)
+    }
+
+    @MainActor
+    func testWorkspaceCopyCannotInsertBeforeRestorationFinishes() async throws {
+        let subject = createSubject()
+        let item = FloorpWorkspaceCopyItem(url: "https://workspace-copy.invalid/page", title: "Page")
+        do {
+            try await subject.persistWorkspaceCopy(item: item, localID: UUID())
+            XCTFail("Expected unavailable destination")
+        } catch FloorpWorkspaceCopyError.destinationUnavailable { }
+        XCTAssertTrue(subject.tabs.isEmpty)
+        XCTAssertTrue(mockTabStore.durableWorkspaceCopyWindows.isEmpty)
+    }
+
+    @MainActor
+    func testWorkspaceCopyCannotReuseAPrivateTabID() async throws {
+        let privateTab = try XCTUnwrap(generateTabs(ofType: .privateAny, count: 1).first)
+        let subject = createSubject(tabs: [privateTab])
+        subject.tabRestoreHasFinished = true
+        let localID = try XCTUnwrap(UUID(uuidString: privateTab.tabUUID))
+        let item = FloorpWorkspaceCopyItem(url: "https://workspace-copy.invalid/page", title: "Page")
+        do {
+            try await subject.persistWorkspaceCopy(item: item, localID: localID)
+            XCTFail("Expected private ID collision rejection")
+        } catch FloorpWorkspaceCopyError.persistenceUnavailable { }
+        XCTAssertTrue(subject.normalTabs.isEmpty)
+        XCTAssertTrue(subject.privateTabs.first === privateTab)
+        XCTAssertTrue(mockTabStore.durableWorkspaceCopyWindows.isEmpty)
+    }
+
     // MARK: - normalTabs / privateTabs cache tests
 
     @MainActor

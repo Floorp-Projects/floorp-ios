@@ -61,6 +61,7 @@ final class TabTrayViewController: UIViewController,
     }
     var childPanelThemes: [Theme]?
     weak var delegate: TabTrayViewControllerDelegate?
+    var onShowSharedWorkspaces: (() -> Void)?
     weak var navigationHandler: TabTrayNavigationHandler?
     private var tabTrayUtils: TabTrayUtils
 
@@ -224,6 +225,16 @@ final class TabTrayViewController: UIViewController,
                                      action: #selector(syncTabsTapped))
 
         button.accessibilityIdentifier = AccessibilityIdentifiers.TabTray.syncTabsButton
+        return button
+    }()
+
+    private lazy var sharedWorkspacesButton: UIBarButtonItem = {
+        let button = UIBarButtonItem(image: UIImage(systemName: "square.stack.3d.up"),
+                                     style: .plain,
+                                     target: self,
+                                     action: #selector(showSharedWorkspaces))
+        button.accessibilityLabel = FloorpStrings.Workspaces.title
+        button.accessibilityIdentifier = "Floorp.Workspaces.Open"
         return button
     }()
 
@@ -712,6 +723,10 @@ final class TabTrayViewController: UIViewController,
         } else {
             toolbarItems = isSyncTabsPanel ? bottomToolbarItemsForSync : bottomToolbarItems
         }
+        if tabTrayState.isNormalTabsPanel {
+            let space = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+            toolbarItems.insert(contentsOf: [sharedWorkspacesButton, space], at: 2)
+        }
         setToolbarItems(toolbarItems, animated: true)
     }
 
@@ -722,6 +737,9 @@ final class TabTrayViewController: UIViewController,
         } else {
             navigationItem.leftBarButtonItem = deleteButton
             navigationItem.rightBarButtonItems = [doneButton, fixedSpace, newTabButton]
+            if tabTrayState.isNormalTabsPanel {
+                navigationItem.rightBarButtonItems?.append(sharedWorkspacesButton)
+            }
         }
 
         navigationController?.isToolbarHidden = true
@@ -996,6 +1014,11 @@ final class TabTrayViewController: UIViewController,
         let action = RemoteTabsPanelAction(windowUUID: windowUUID,
                                            actionType: RemoteTabsPanelActionType.refreshTabs)
         store.dispatch(action)
+    }
+
+    @objc private func showSharedWorkspaces() {
+        guard tabTrayState.isNormalTabsPanel else { return }
+        onShowSharedWorkspaces?()
     }
 
     // MARK: - TabTraySelectorDelegate

@@ -14,36 +14,39 @@ readonly PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PRODUCT="${1:-firefox}"
 readonly FORCE_BOOTSTRAP="${2:-}"
 
-# Keep this revision aligned with Mozilla Application Services updates.
-# The checksum prevents executing a mutable or corrupted bootstrap payload.
+# Preserve the immutable upstream identity of the reviewed vendored source.
 readonly NIMBUS_SCRIPT_REVISION="f515906ebb956a1a1cd6ad51d0f8877a6a8675f3"
 readonly NIMBUS_SCRIPT_SHA256="443a72235811e6367914f80b2eacc900d55913442cb9d594930170e0e2cc5da4"
 readonly NIMBUS_SCRIPT_URL="https://raw.githubusercontent.com/mozilla/application-services/${NIMBUS_SCRIPT_REVISION}/components/nimbus/ios/scripts/nimbus-fml.sh"
+readonly NIMBUS_PATCHED_SCRIPT_SHA256="c363d08ed2ad16d18bc31407a7940bcb4701b39b8396aec0d2a007acdfd07226"
+readonly NIMBUS_VENDORED_SCRIPT="${PROJECT_ROOT}/scripts/nimbus-fml-vendor/nimbus-fml.sh"
 
 install_nimbus_script() {
     local destination="${PROJECT_ROOT}/firefox-ios/bin/nimbus-fml.sh"
     local current_checksum=""
     local temporary_file
 
+    if ! printf '%s  %s\n' "${NIMBUS_PATCHED_SCRIPT_SHA256}" "${NIMBUS_VENDORED_SCRIPT}" | shasum -a 256 --check; then
+        echo "Vendored Nimbus FML script differs from its reviewed checksum." >&2
+        return 1
+    fi
+
     if [[ -f "${destination}" ]]; then
         current_checksum="$(shasum -a 256 "${destination}" | awk '{print $1}')"
     fi
 
-    if [[ "${current_checksum}" == "${NIMBUS_SCRIPT_SHA256}" ]]; then
+    if [[ "${current_checksum}" == "${NIMBUS_PATCHED_SCRIPT_SHA256}" ]]; then
         echo "Nimbus FML script is already up to date."
         return
     fi
 
-    temporary_file="$(mktemp "${TMPDIR:-/tmp}/floorp-nimbus-fml.XXXXXX")"
-
-    curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-        --location "${NIMBUS_SCRIPT_URL}" --output "${temporary_file}"
-    if ! printf '%s  %s\n' "${NIMBUS_SCRIPT_SHA256}" "${temporary_file}" | shasum -a 256 --check; then
+    temporary_file="$(mktemp "${destination}.XXXXXX")"
+    if ! install -m 0755 "${NIMBUS_VENDORED_SCRIPT}" "${temporary_file}" \
+        || ! printf '%s  %s\n' "${NIMBUS_PATCHED_SCRIPT_SHA256}" "${temporary_file}" | shasum -a 256 --check; then
         rm -f "${temporary_file}"
         return 1
     fi
-    install -m 0755 "${temporary_file}" "${destination}"
-    rm -f "${temporary_file}"
+    mv -f "${temporary_file}" "${destination}"
 }
 
 install_git_hooks() {

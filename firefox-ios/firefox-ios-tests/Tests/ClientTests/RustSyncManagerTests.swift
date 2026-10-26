@@ -376,7 +376,8 @@ class RustSyncManagerTests: XCTestCase {
         XCTAssertEqual(syncedDevicesCount, 0)
     }
 
-    func testPostLogoutNotesFinalizeFailureStillCompletesAccountCleanup() {
+    @MainActor
+    func testPostLogoutNotesFinalizeFailureStillCompletesAccountCleanup() async {
         let accountChanged = expectation(
             forNotification: .FirefoxAccountChanged,
             object: nil
@@ -396,7 +397,7 @@ class RustSyncManagerTests: XCTestCase {
             removalFinished.fulfill()
         }
 
-        wait(for: [accountChanged, removalFinished], timeout: 2)
+        await fulfillment(of: [accountChanged, removalFinished], timeout: 10)
         XCTAssertNil(profile.prefs.intForKey(PrefsKeys.KeyLastRemoteTabSyncTime))
         XCTAssertEqual(syncManager.finalizeAccountRemovalCallCount, 1)
         profile.shutdown()
@@ -1325,6 +1326,94 @@ class RustSyncManagerTests: XCTestCase {
         XCTAssertEqual(provider.cancelDisconnectCallCount, 0)
     }
 
+    func testWorkspaceAndNotesExecutionPoliciesAreIndependentInAllFourCombinations() throws {
+        let notes = TestFloorpNotesSyncEngineProvider()
+        let workspaces = TestFloorpWorkspaceSyncEngineProvider()
+        rustSyncManager.installFloorpNotesSyncEngineProvider(notes)
+        rustSyncManager.installFloorpWorkspaceSyncEngineProvider(workspaces)
+        rustSyncManager.bootstrapFloorpNotesRuntimePolicy(compiledEvidenceAllows: true)
+        let generation = try XCTUnwrap(rustSyncManager.activeSyncLifecycleGeneration())
+        for notesEnabled in [false, true] {
+            for workspacesEnabled in [false, true] {
+                rustSyncManager.applyFloorpNotesRuntimePolicy(enabled: notesEnabled)
+                rustSyncManager.setFloorpWorkspaceDiscoveryEnabled(workspacesEnabled)
+                let prepared = rustSyncManager.prepareSyncParamsForExecution(
+                    makeSyncParams(engines: ["tabs", "prefs", "floorp-workspaces"]),
+                    lifecycleGeneration: generation,
+                    accountID: "account-a",
+                    expectedFloorpNotesGeneration: nil,
+                    executionContext: FloorpNotesSyncExecutionContext(),
+                    workspaceContext: FloorpWorkspaceSyncExecutionContext()
+                )
+                var expected = ["tabs"]
+                if notesEnabled { expected.append("prefs") }
+                if workspacesEnabled { expected.append("floorp-workspaces") }
+                XCTAssertEqual(prepared?.engines, .some(engines: expected))
+            }
+        }
+    }
+
+    func testWorkspaceOnlySyncPreservesPendingInitialAndStandardEngineChoices() {
+        let context = FloorpWorkspaceSyncExecutionContext()
+        UserDefaults.standard.set(["bookmarks"], forKey: "fxa.cwts.declinedSyncEngines")
+        profile.prefs.setBool(true, forKey: Keys.historyEnabledPrefKey)
+        profile.prefs.setBool(true, forKey: Keys.historyStateChangedPrefKey)
+        let prepared = rustSyncManager.prepareSyncEnablementForExecution(
+            makeSyncParams(engines: ["floorp-workspaces"]), context: context
+        )
+        XCTAssertTrue(prepared.enabledChanges.isEmpty)
+        rustSyncManager.applySyncEnginePreferences(
+            SyncResult(
+                status: .ok,
+                successful: ["floorp-workspaces"],
+                failures: [:],
+                persistedState: "",
+                declined: ["history"],
+                nextSyncAllowedAt: nil,
+                telemetryJson: nil
+            ),
+            context: context
+        )
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: "fxa.cwts.declinedSyncEngines"), ["bookmarks"])
+        XCTAssertEqual(profile.prefs.boolForKey(Keys.historyEnabledPrefKey), true)
+        XCTAssertEqual(profile.prefs.boolForKey(Keys.historyStateChangedPrefKey), true)
+        let standard = rustSyncManager.prepareSyncEnablementForExecution(
+            makeSyncParams(engines: ["tabs"]), context: FloorpWorkspaceSyncExecutionContext()
+        )
+        XCTAssertEqual(standard.enabledChanges["bookmarks"], false)
+        XCTAssertNil(UserDefaults.standard.object(forKey: "fxa.cwts.declinedSyncEngines"))
+    }
+
+    func testWorkspaceOnlyPolicyUsesEnginesAfterNotesAdmission() throws {
+        rustSyncManager.installFloorpWorkspaceSyncEngineProvider(TestFloorpWorkspaceSyncEngineProvider())
+        rustSyncManager.bootstrapFloorpNotesRuntimePolicy(compiledEvidenceAllows: false)
+        let generation = try XCTUnwrap(rustSyncManager.activeSyncLifecycleGeneration())
+        let context = FloorpWorkspaceSyncExecutionContext()
+        let admitted = try XCTUnwrap(rustSyncManager.prepareSyncParamsForExecution(
+            makeSyncParams(engines: ["prefs", "floorp-workspaces"]),
+            lifecycleGeneration: generation,
+            accountID: "account-a",
+            expectedFloorpNotesGeneration: nil,
+            executionContext: FloorpNotesSyncExecutionContext(),
+            workspaceContext: context
+        ))
+        let prepared = rustSyncManager.prepareSyncEnablementForExecution(admitted, context: context)
+        XCTAssertEqual(prepared.engines, .some(engines: ["floorp-workspaces"]))
+        XCTAssertTrue(prepared.enabledChanges.isEmpty)
+        XCTAssertFalse(context.allowsStandardPreferenceUpdates)
+    }
+
+    func testWorkspaceSelectionIsExplicitAndNotTogglable() {
+        let selection = FloorpNotesSyncEngineSelection.partition(
+            requested: ["floorp-workspaces", "tabs", "floorp-workspaces"]
+        )
+        XCTAssertEqual(selection.togglable, [.tabs])
+        XCTAssertTrue(selection.requestsFloorpWorkspaces)
+        XCTAssertFalse(selection.requestsFloorpPrefs)
+        XCTAssertEqual(selection.additionalFloorpEngines, ["floorp-workspaces"])
+        XCTAssertFalse(RustSyncManagerAPI.TogglableEngine.allCases.contains { $0.rawValue == "floorp-workspaces" })
+    }
+
     private func makeSyncParams(
         engines: [String],
         tokenServerURL: String = "https://token.services.mozilla.com/1.0/sync/1.5"
@@ -1662,4 +1751,11 @@ private final class TestRustSyncManagerComponent:
 
 private enum TestRustSyncManagerComponentError: Error {
     case checkedDisconnect
+}
+
+private final class TestFloorpWorkspaceSyncEngineProvider: FloorpWorkspaceSyncEngineProviding, @unchecked Sendable {
+    func prepare(accountID: String) throws -> UInt64 { 1 }
+    func didFinishSync(successful: Bool, status: ServiceStatus, generation: UInt64) {}
+    func suspend() {}
+    func clear() throws {}
 }
