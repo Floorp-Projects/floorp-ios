@@ -86,9 +86,24 @@ HTTP(S) page is dark without popup/reload.
 ## Paste into TestFlight — What to Test
 
 ```text
-Floorp 0.3.0 — Runtime fixes and native WebExtensions candidate
+Floorp 0.3.0 — Shared workspace previews and independent copies
 
-Please focus on three reported regressions:
+Sign in to the same Mozilla account as a supported Desktop Floorp build, then open
+shared workspaces from the normal tab tray. Check the list, names, tab order and
+URLs of workspaces shared from Desktop.
+
+Previews should not load their web pages. Open selected tabs as independent normal
+tab copies, and check that duplicate URLs retain their order and count. Copies
+must remain after Desktop changes or deletes the shared workspace, after receiving
+updates is turned off on iOS, and after sign-out or relaunch. Switching accounts
+must not show the previous account's previews.
+
+This release receives Desktop workspaces and opens independent copies. Editing,
+moving or deleting an iOS copy does not change the shared Desktop workspace.
+Two-way synchronization is deferred. Please also report regressions in Private
+Browsing, standard tab sync, Notes or Notes Sync.
+
+Please also check three previously reported regressions:
 
 1. Fully quit and cold-launch Floorp repeatedly. The browser UI should appear promptly;
    startup must not pause for 8–15 seconds while bundled extensions initialize.
