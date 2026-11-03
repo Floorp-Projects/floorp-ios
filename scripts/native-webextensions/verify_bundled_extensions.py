@@ -186,7 +186,8 @@ EXPECTED = (
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
             "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "ca9f06752eb6b931955823969e30685cf1f736569bbec7fdf852f2a0a6577729",
-            "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
+            "scripts/package-ubol-ios.sh": "cc09bf4bad6449952cdb018aa043bd75425902596e9881322263b629114b3960",
+            "scripts/native-webextensions/update_ubol_network_snapshot.py": "b95f3c049558e4892c2cda606927b7bdc8ef320d6d842a5d2cbd604a94adc2a8",
         },
         "provenance": {
             "asset": "uBOLite-floorp-ios-2026.825.1619.zip",
@@ -296,8 +297,23 @@ EXPECTED = (
                 },
             ],
             "license": "GPL-3.0-or-later",
+            "networkSnapshot": {
+                "description": "Refresh the plain network rules for the five default lists from the official Safari 2026.1026.1812 snapshot. Preserve the pinned JavaScript runtime, regex rules, scriptlets, cosmetic rules, redirect resources and user list selections; update only plain/total rule counts.",
+                "paths": [
+                    "rulesets/main/ublock-filters.json",
+                    "rulesets/main/easylist.json",
+                    "rulesets/main/easyprivacy.json",
+                    "rulesets/main/adguard-mobile.json",
+                    "rulesets/main/jpn-1.json",
+                    "rulesets/ruleset-details.json"
+                ],
+                "upstreamAsset": "uBOLite_2026.1026.1812.safari.zip",
+                "upstreamDownloadURL": "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.1026.1812/uBOLite_2026.1026.1812.safari.zip",
+                "upstreamSHA256": "f56b42e7e753143b1da4f64e12baf67724d48cef055eb46f9d49eddb4665f5b3",
+                "buildScript": "scripts/native-webextensions/update_ubol_network_snapshot.py"
+            },
             "release": "2026.825.1619",
-            "sha256": "95ebc79c3cb918864090c2cb82b89db1e80fa73141b41f6f831acd80d8188e66",
+            "sha256": "6c088bbbb142fff2f4637dca22de101e281e0d49ba955a4d300d6fa70d44923e",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",

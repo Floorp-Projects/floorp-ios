@@ -14,10 +14,15 @@ class UBOLStaticRequestDomainExclusionTests(unittest.TestCase):
             rules = json.loads(archive.read("rulesets/main/ublock-filters.json"))
             details = json.loads(archive.read("rulesets/ruleset-details.json"))
 
-        by_id = {rule["id"]: rule for rule in rules}
-        self.assertNotIn(5135, by_id)
-        self.assertIn(5134, by_id)
-        self.assertIn(5136, by_id)
+        self.assertTrue(any(
+            rule["condition"].get("urlFilter") == "||cfd/tags/*.js"
+            for rule in rules
+        ))
+        self.assertFalse(any(
+            set(rule["condition"].get("excludedRequestDomains", [])) == {"com", "net", "org"}
+            and not rule["condition"].get("initiatorDomains")
+            for rule in rules
+        ))
         self.assertFalse(any(
             rule["condition"].get("urlFilter") == "/8b3ytkn.js|"
             for rule in rules

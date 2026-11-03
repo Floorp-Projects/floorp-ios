@@ -56,6 +56,12 @@ class BundledNativeWebExtensionVerifierTests(unittest.TestCase):
                 REPOSITORY_ROOT / "scripts" / script_name,
                 scripts_destination / script_name,
             )
+        snapshot_script = Path("native-webextensions/update_ubol_network_snapshot.py")
+        (scripts_destination / snapshot_script).parent.mkdir(parents=True)
+        shutil.copy2(
+            REPOSITORY_ROOT / "scripts" / snapshot_script,
+            scripts_destination / snapshot_script,
+        )
         self.dark_reader_build_script = scripts_destination / "package-darkreader-ios.sh"
 
     def tearDown(self) -> None:

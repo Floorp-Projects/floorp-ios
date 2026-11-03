@@ -50,7 +50,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `95ebc79c3cb918864090c2cb82b89db1e80fa73141b41f6f831acd80d8188e66`、
+派生 SHA-256 は `6c088bbbb142fff2f4637dca22de101e281e0d49ba955a4d300d6fa70d44923e`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。
 上流の [2026.1026.1812 Safari package](https://github.com/uBlockOrigin/uBOL-home/releases/tag/2026.1026.1812)
@@ -62,6 +62,15 @@ source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 2026-11-03 の iPhone Air（iOS 27.0、Floorp build 137→138）で、同じ既定リスト・Optimal 設定の
 AdBlock Tester は77→91点（各2回）、Turtlecute は93/132件遮断（各2回）だった。
 これらは各サイトの合成チェック結果であり、実際の全広告の遮断率や速度を示す値ではない。
+
+標準5リスト（uBlock filters、EasyList、EasyPrivacy、Mobile Ads、Japanese）の通常の通信ルールは、
+公式 Safari 2026.1026.1812 ZIP の `rulesets/main/*.json` をそのまま取り込む。
+`networkSnapshot` provenance に配布 URL、SHA-256、対象パス、更新スクリプトを記録する。
+JavaScript runtime、正規表現ルール、scriptlet、cosmetic rules、置換用リソースは8月版を維持する。
+`ruleset-details.json` は plain と total のみ更新し、残りは元のデータの集計を保つ。
+更新は `scripts/package-ubol-ios.sh <8月版ZIP> <出力ZIP> <10月版ZIP>` で再現できる。
+両入力の digest と既存の置換用リソースへの参照を検証してから、固定した5ファイルだけを置き換える。
+直前の派生 package からも保存設定を保って移行する。
 
 `uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched

@@ -8,13 +8,14 @@ readonly script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly repository_root="$(cd "${script_dir}/.." && pwd)"
 readonly compatibility_patch="${repository_root}/firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch"
 
-if [[ $# -ne 2 ]]; then
-    echo "usage: $0 <upstream-ubol-safari.zip> <output.zip>" >&2
+if [[ $# -ne 3 ]]; then
+    echo "usage: $0 <upstream-ubol-safari.zip> <output.zip> <network-snapshot-safari.zip>" >&2
     exit 64
 fi
 
 readonly upstream_archive="$1"
 readonly requested_output_archive="$2"
+readonly network_snapshot_archive="$3"
 
 if [[ ! -f "${upstream_archive}" ]]; then
     echo "upstream archive does not exist: ${upstream_archive}" >&2
@@ -37,6 +38,10 @@ if find "${staging_directory}" -type f \( -name '*.orig' -o -name '*.rej' \) -pr
     echo "patch created an unexpected backup or reject file" >&2
     exit 65
 fi
+
+# Refresh only the reviewed network data; keep the audited runtime and regex rules.
+python3 "${script_dir}/native-webextensions/update_ubol_network_snapshot.py" \
+    "${staging_directory}" "${network_snapshot_archive}"
 
 # Normalize metadata and ordering so the reviewed package digest is reproducible.
 find "${staging_directory}" -type f -exec env TZ=UTC touch -t "${normalized_timestamp}" {} +

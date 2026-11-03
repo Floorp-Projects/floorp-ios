@@ -2322,7 +2322,16 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
-        legacyRecord = preRequestDomainExclusionBackportRecord
+        var preNetworkSnapshotRefreshRecord = legacyRecord
+        preNetworkSnapshotRefreshRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preNetworkSnapshotRefreshUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preNetworkSnapshotRefreshRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        legacyRecord = preNetworkSnapshotRefreshRecord
         let originalContextIdentifier = legacyRecord.contextIdentifier
         let originalBaseURLHost = legacyRecord.baseURLHost
         try store.save(FloorpNativeWebExtensionRegistry(extensions: [legacyRecord]))
@@ -6679,7 +6688,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "95ebc79c3cb918864090c2cb82b89db1e80fa73141b41f6f831acd80d8188e66"
+            "6c088bbbb142fff2f4637dca22de101e281e0d49ba955a4d300d6fa70d44923e"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")
