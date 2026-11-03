@@ -58,12 +58,13 @@ Bundled open-source components:
   Malformed journals fail closed. DNR updates are
   serialized and read back exactly. Two hidden DNR keeper slots cap each public dynamic/session store at 14,999;
   ID 7,000,000 matches only floorp.invalid, makes no request, is hidden from reads, and rejects collisions.
-  Legacy full stores remain readable; failed updates never auto-delete user rules. UI failures remain retryable.
+  Failed updates retain user rules; UI errors remain retryable.
   Upstream: https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.825.1619/uBOLite_2026.825.1619.safari.zip
   Upstream SHA-256: 89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94
-  Derived SHA-256: 62413b4155da10696fcdd45f28a898f7e3bc7e4653e2cf8a9a23ce4413f37f45
+  Derived SHA-256: 6c088bbbb142fff2f4637dca22de101e281e0d49ba955a4d300d6fa70d44923e
   Patch: firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch
   Build: scripts/package-ubol-ios.sh
+  Plain network rules: official Safari 2026.1026.1812.
   Source commit: 080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b
 - Floorp source: https://github.com/Floorp-Projects/floorp-ios/tree/[RELEASE_TAG_OR_FULL_COMMIT]
   ZIPs, MIT/GPL text, and provenance ship in-app.
@@ -82,6 +83,17 @@ popups, Options, uBO request/cosmetic blocking, and separate Private access. Ena
 mode and open Matched rules in both modes. After Dark Reader idles 35 seconds, verify a fresh
 HTTP(S) page is dark without popup/reload.
 ```
+
+Network snapshot packaging details:
+
+Network data overlay: the five default plain network rule files come from
+  https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.1026.1812/uBOLite_2026.1026.1812.safari.zip
+  SHA-256: f56b42e7e753143b1da4f64e12baf67724d48cef055eb46f9d49eddb4665f5b3
+  Overlay script: scripts/native-webextensions/update_ubol_network_snapshot.py
+  Supply the reviewed October ZIP as the third packaging argument. Runtime code,
+  regex filters, scriptlets, cosmetic filters and redirect resources stay pinned
+  to the audited base package. Only plain/total rule counts are refreshed.
+
 
 ## Paste into TestFlight — What to Test
 
@@ -150,7 +162,7 @@ protection, Notes or Notes Sync.
 | Extension | Catalog identifier | Version | SHA-256 | Source commit | License | Package policy | Minimum |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Dark Reader | `floorp.bundled.darkreader` | `4.9.129` | `767b0d327fd2ef9c4524fcc4b79124fb4342938035e06fa12c97bf06ab135118` | `c2a707302a39b8047543712e9c582bac07835d34` | `MIT` | Floorp-derived; nonpersistent background plus Safari storage/readiness/UI-close durability, close-tracked acknowledged popup routing, and unsupported shortcut UI removal; upstream SHA-256 `20e7993eee8015f7db18748eea366616dfd05ec477efb7be6ae52d2b221b0a64` | iOS 18.4 |
-| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `62413b4155da10696fcdd45f28a898f7e3bc7e4653e2cf8a9a23ce4413f37f45` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe close-tracked acknowledged popup routing, serialized storage, combined/per-store-capacity-reserved hidden Safari dynamic/session DNR keepers with non-destructive legacy migration, durable serialized DNR/script reconciliation with delayed-readback convergence, exact-runtime-URL fallback for WebKit lifecycle sender validation, random document-root-scoped custom cosmetic/procedural reinjection over WebKit all-frame native CSS with canary-backed acknowledgements and bounded 15-second retry windows, direct/inherited same-registration procedural API preload, transport-fallback bounded custom-filter snapshots, queue-time document-idle/dynamic recovery, dynamic-preflight-free origin-fallback replies, uncommitted-only document-idle replay, and event-bounded BFCache recovery across cross-host/normal/private/origin-fallback navigation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
+| uBlock Origin Lite | `floorp.bundled.ublock-origin-lite` | `2026.825.1619` | `6c088bbbb142fff2f4637dca22de101e281e0d49ba955a4d300d6fa70d44923e` | `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b` | `GPL-3.0-or-later` | Floorp-derived; public DNR feedback, realm-safe close-tracked acknowledged popup routing, serialized storage, combined/per-store-capacity-reserved hidden Safari dynamic/session DNR keepers with non-destructive legacy migration, durable serialized DNR/script reconciliation with delayed-readback convergence, exact-runtime-URL fallback for WebKit lifecycle sender validation, random document-root-scoped custom cosmetic/procedural reinjection over WebKit all-frame native CSS with canary-backed acknowledgements and bounded 15-second retry windows, direct/inherited same-registration procedural API preload, transport-fallback bounded custom-filter snapshots, queue-time document-idle/dynamic recovery, dynamic-preflight-free origin-fallback replies, uncommitted-only document-idle replay, and event-bounded BFCache recovery across cross-host/normal/private/origin-fallback navigation, transaction-safe draft-preserving user-DNR restore, fail-closed Safari DNR shape/regex handling without partial user-rule replacement, foreground-completed rollback/readback, cross-dashboard state convergence, DOM-safe ruleset readback, host-awaited UI close, and startup-safe schema-validated Page Action initialization; upstream SHA-256 `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94` | iOS / Safari 26.0 |
 
 The canonical local evidence is:
 

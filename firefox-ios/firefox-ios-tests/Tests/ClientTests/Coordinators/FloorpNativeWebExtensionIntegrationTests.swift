@@ -2313,7 +2313,25 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
             ),
             FloorpNativeWebExtensionCatalog.uBlockOriginLite
         )
-        legacyRecord = preRegistrationRetryDiagnosticsRecord
+        var preRequestDomainExclusionBackportRecord = legacyRecord
+        preRequestDomainExclusionBackportRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preRequestDomainExclusionBackportUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preRequestDomainExclusionBackportRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        var preNetworkSnapshotRefreshRecord = legacyRecord
+        preNetworkSnapshotRefreshRecord.sha256 = FloorpNativeWebExtensionCatalog
+            .preNetworkSnapshotRefreshUBlockOriginLiteSHA256
+        XCTAssertEqual(
+            FloorpNativeWebExtensionCatalog.replacementForLegacyBundledRecord(
+                preNetworkSnapshotRefreshRecord
+            ),
+            FloorpNativeWebExtensionCatalog.uBlockOriginLite
+        )
+        legacyRecord = preNetworkSnapshotRefreshRecord
         let originalContextIdentifier = legacyRecord.contextIdentifier
         let originalBaseURLHost = legacyRecord.baseURLHost
         try store.save(FloorpNativeWebExtensionRegistry(extensions: [legacyRecord]))
@@ -6670,7 +6688,7 @@ final class FloorpNativeWebExtensionIntegrationTests: XCTestCase {
         XCTAssertEqual(item.expectedVersion, "2026.825.1619")
         XCTAssertEqual(
             item.expectedSHA256,
-            "62413b4155da10696fcdd45f28a898f7e3bc7e4653e2cf8a9a23ce4413f37f45"
+            "6c088bbbb142fff2f4637dca22de101e281e0d49ba955a4d300d6fa70d44923e"
         )
         XCTAssertEqual(item.minimumOS, FloorpOperatingSystemVersion(26, 0))
         XCTAssertEqual(item.license, "GPL-3.0-or-later")

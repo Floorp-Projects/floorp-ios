@@ -11944,3 +11944,26 @@ index e648a01..9b72276 100644
 +++ b/popup.html
 @@ -29,0 +30 @@
 +    <p id="runtimeError" role="alert" aria-live="assertive"></p>
+--- a/rulesets/main/ublock-filters.json
++++ b/rulesets/main/ublock-filters.json
+@@ -5133,7 +5133,6 @@
+ {"action":{"type":"block"},"condition":{"domainType":"thirdParty","resourceTypes":["script"],"urlFilter":"||jsdelivr.net/*/levelmaxblock.js"},"id":5132,"priority":10},
+ {"action":{"type":"block"},"condition":{"domainType":"thirdParty","resourceTypes":["script"],"urlFilter":"||jsdelivr.net/*/adb-analytics"},"id":5133,"priority":10},
+ {"action":{"type":"block"},"condition":{"domainType":"thirdParty","resourceTypes":["script"],"urlFilter":"||cfd/tags/*.js"},"id":5134,"priority":10},
+-{"action":{"type":"block"},"condition":{"domainType":"thirdParty","excludedRequestDomains":["com","net","org"],"resourceTypes":["script"],"urlFilter":"/8b3ytkn.js|"},"id":5135,"priority":10},
+ {"action":{"type":"block"},"condition":{"domainType":"thirdParty","resourceTypes":["script","xmlhttprequest"],"urlFilter":"||co/*?tb=https%3a%2f%2f%host%%2fapi%2fback%2fxetergewx3&sid=vast"},"id":5136,"priority":10},
+ {"action":{"type":"block"},"condition":{"domainType":"thirdParty","resourceTypes":["script","xmlhttprequest"],"urlFilter":"||com/*?tb=https%3a%2f%2f%host%%2fapi%2fback%2fxetergewx3&sid=vast"},"id":5137,"priority":10},
+ {"action":{"type":"block"},"condition":{"domainType":"thirdParty","resourceTypes":["script","xmlhttprequest"],"urlFilter":"||info/*?tb=https%3a%2f%2f%host%%2fapi%2fback%2fxetergewx3&sid=vast"},"id":5138,"priority":10},
+--- a/rulesets/ruleset-details.json
++++ b/rulesets/ruleset-details.json
+@@ -11,8 +11,8 @@
+    "rejected": 1
+   },
+   "rules": {
+-   "total": 6747,
+-   "plain": 6505,
++   "total": 6746,
++   "plain": 6504,
+    "regex": 242,
+    "strictblock": 52,
+    "urlskip": 234,
