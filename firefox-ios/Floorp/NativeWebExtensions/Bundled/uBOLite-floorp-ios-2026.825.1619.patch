@@ -7915,13 +7915,21 @@ index 0000000..be24df2
 +
 +'use strict';
 diff --git a/js/scripting-manager.js b/js/scripting-manager.js
-index e0b8aae..050db6e 100644
 --- a/js/scripting-manager.js
 +++ b/js/scripting-manager.js
-@@ -26 +26 @@ import {
+@@ -23,7 +23,7 @@
+ 
+ import {
+     browser,
 -    localKeys, localRemove, localWrite,
 +    localKeys, localRemove, localSnapshot, localWrite,
-@@ -42,0 +43,138 @@ const resourceDetailPromises = new Map();
+     sessionKeys, sessionRead, sessionRemove,
+     webextFlavor,
+ } from './ext.js';
+@@ -40,24 +40,218 @@
+ /******************************************************************************/
+ 
+ const resourceDetailPromises = new Map();
 +const safariRegistrationSentinelId = 'floorp-safari-registration-sentinel';
 +
 +const canonicalPatternList = values => Array.from(new Set(
@@ -7956,6 +7964,25 @@ index e0b8aae..050db6e 100644
 +        comparableRegistration(beforeById.get(details.id) || {}) !==
 +            comparableRegistration(details)
 +    );
++}
++
++function registrationDifferences(before, desired) {
++    const beforeById = new Map(before.map(details => [ details.id, details ]));
++    const desiredIds = new Set(desired.map(details => details.id));
++    return [
++        ...desired.flatMap(details => {
++            const actual = beforeById.get(details.id);
++            if ( actual === undefined ) { return [{ id: details.id, missing: true }]; }
++            const expected = JSON.parse(comparableRegistration(details));
++            const observed = JSON.parse(comparableRegistration(actual));
++            const fields = Object.keys(expected).filter(key =>
++                JSON.stringify(expected[key]) !== JSON.stringify(observed[key])
++            );
++            return fields.length !== 0 ? [{ id: details.id, fields }] : [];
++        }),
++        ...before.filter(details => desiredIds.has(details.id) === false)
++            .map(details => ({ id: details.id, unexpected: true })),
++    ];
 +}
 +
 +// Safari scripting operations are not atomic: an API call can apply a prefix
@@ -8018,7 +8045,26 @@ index e0b8aae..050db6e 100644
 +            }
 +            if ( toUpdate.length !== 0 ) {
 +                ubolLog(`Updated ${toUpdate.map(v => v.id)} content (css/js)`);
-+                await scripting.updateContentScripts(toUpdate);
++                if ( attempt === retryDelays.length - 1 ) {
++                    // An acknowledged update can leave legacy registrations
++                    // unchanged. Retain the sentinel and replace only stuck IDs.
++                    const ids = toUpdate.map(details => details.id);
++                    await scripting.unregisterContentScripts({ ids });
++                    const remaining = await scripting.getRegisteredContentScripts();
++                    if ( remaining.some(details => ids.includes(details.id)) ) {
++                        throw new Error('Safari content-script removal did not converge');
++                    }
++                    const retainedSentinel = remaining.find(
++                        details => details.id === safariRegistrationSentinelId
++                    );
++                    if ( comparableRegistration(retainedSentinel || {}) !==
++                         comparableRegistration(sentinel) ) {
++                        throw new Error('Safari registration sentinel verification failed');
++                    }
++                    await scripting.registerContentScripts(toUpdate);
++                } else {
++                    await scripting.updateContentScripts(toUpdate);
++                }
 +            }
 +            if ( removeIds.length !== 0 ) {
 +                ubolLog(`Unregistered ${removeIds} content (css/js)`);
@@ -8027,12 +8073,13 @@ index e0b8aae..050db6e 100644
 +
 +            const after = await scripting.getRegisteredContentScripts();
 +            if ( registrationMismatch(after, desired) ) {
-+                throw new Error('Safari content-script reconciliation did not converge');
++                throw new Error('Safari content-script reconciliation did not converge: ' +
++                    JSON.stringify(registrationDifferences(after, desired)));
 +            }
 +            return;
 +        } catch(reason) {
 +            lastError = reason;
-+            ubolErr(`reconcileSafariContentScripts/${attempt + 1}/${reason}`);
++            ubolLog(`reconcileSafariContentScripts/${attempt + 1}/${reason}`);
 +            // A Safari mutation can reject after applying all requested rows.
 +            // Treat verified native state as success instead of repeating a
 +            // registration which can then fail as a duplicate.
@@ -8048,6 +8095,7 @@ index e0b8aae..050db6e 100644
 +            }
 +        }
 +    }
++    ubolErr(`reconcileSafariContentScripts/${lastError}`);
 +    throw lastError;
 +}
 +
@@ -8060,7 +8108,10 @@ index e0b8aae..050db6e 100644
 +    reconcileSafariContentScripts.pendingOp = operation.catch(( ) => {});
 +    return await operation;
 +}
-@@ -47,3 +185,6 @@ function getScriptletDetails() {
+ 
+ function getScriptletDetails() {
+     let promise = resourceDetailPromises.get('scriptlet');
+     if ( promise !== undefined ) { return promise; }
 -    promise = fetchJSON('/rulesets/scriptlet-details').then(
 -        entries => new Map(entries)
 -    );
@@ -8070,13 +8121,18 @@ index e0b8aae..050db6e 100644
 +        }
 +        return new Map(entries);
 +    });
-@@ -50,0 +192,5 @@ function getScriptletDetails() {
+     resourceDetailPromises.set('scriptlet', promise);
 +    promise.catch(( ) => {
 +        if ( resourceDetailPromises.get('scriptlet') === promise ) {
 +            resourceDetailPromises.delete('scriptlet');
 +        }
 +    });
-@@ -57,3 +203,6 @@ function getGenericDetails() {
+     return promise;
+ }
+ 
+ function getGenericDetails() {
+     let promise = resourceDetailPromises.get('generic');
+     if ( promise !== undefined ) { return promise; }
 -    promise = fetchJSON('/rulesets/generic-details').then(
 -        entries => new Map(entries)
 -    );
@@ -8086,19 +8142,31 @@ index e0b8aae..050db6e 100644
 +        }
 +        return new Map(entries);
 +    });
-@@ -60,0 +210,5 @@ function getGenericDetails() {
+     resourceDetailPromises.set('generic', promise);
 +    promise.catch(( ) => {
 +        if ( resourceDetailPromises.get('generic') === promise ) {
 +            resourceDetailPromises.delete('generic');
 +        }
 +    });
-@@ -174 +328 @@ async function registerCosmetic(context) {
+     return promise;
+ }
+ 
+@@ -171,9 +365,9 @@
+ 
+     {
+         const keys = await localKeys();
 -        localRemove(keys.filter(a => a.startsWith('css.specific.')));
 +        await localRemove(keys.filter(a => a.startsWith('css.specific.')));
-@@ -176 +330 @@ async function registerCosmetic(context) {
+         // TODO: remove after a few versions after 2026.516.1652
 -        localRemove(keys.filter(a => a.startsWith('css.procedural.')));
 +        await localRemove(keys.filter(a => a.startsWith('css.procedural.')));
-@@ -310,5 +464,10 @@ function registerScriptlet(context, scriptletDetails) {
+     }
+ 
+     const rulesetIds = [];
+@@ -307,30 +501,41 @@
+ // Issue: Safari appears to completely ignore excludeMatches
+ // https://github.com/radiolondra/ExcludeMatches-Test
+ 
 -export async function registerContentScripts() {
 -    if ( browser.scripting === undefined ) { return false; }
 -    registerContentScripts.pendingOp =
@@ -8114,25 +8182,40 @@ index e0b8aae..050db6e 100644
 +    );
 +    registerContentScripts.pendingOp = operation.catch(( ) => undefined);
 +    return operation;
-@@ -318 +477 @@ registerContentScripts.pendingOp = Promise.resolve();
+ }
+ registerContentScripts.pendingOp = Promise.resolve();
+ 
 -registerContentScripts.register = async function register() {
 +registerContentScripts.register = async function register(throwOnError = false) {
-@@ -323,0 +483 @@ registerContentScripts.register = async function register() {
+     const [
+         filteringModeDetails,
+         rulesetsDetails,
+         scriptletDetails,
+         genericDetails,
 +        localStorageSnapshot,
-@@ -328,0 +489 @@ registerContentScripts.register = async function register() {
+     ] = await Promise.all([
+         getFilteringModeDetails(),
+         getEnabledRulesetsDetails(true),
+         getScriptletDetails(),
+         getGenericDetails(),
 +        localSnapshot(),
-@@ -329,0 +491,3 @@ registerContentScripts.register = async function register() {
+     ]);
 +    // WebExtension APIs do not guarantee enabled-ruleset enumeration order.
 +    // Keep generated script arrays stable across cold starts and updates.
 +    rulesetsDetails.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-@@ -333,0 +498 @@ registerContentScripts.register = async function register() {
+     const toAdd = [];
+     const context = {
+         filteringModeDetails,
+         rulesetsDetails,
 +        localStorageSnapshot,
-@@ -346,5 +511,11 @@ registerContentScripts.register = async function register() {
+         toAdd,
+     };
+ 
+@@ -343,20 +548,39 @@
+         registerToolbarIconToggler(context),
+     ]);
+ 
 -    ubolLog(`Unregistered all content (css/js)`);
--    try {
--        await browser.scripting.unregisterContentScripts();
--    } catch(reason) {
--        ubolErr(`unregisterContentScripts/${reason}`);
 +    if ( webextFlavor === 'safari' ) {
 +        // WebKit's updateContentScripts implementation deletes the database
 +        // before re-adding rows when every current script changes. Keep one
@@ -8144,14 +8227,10 @@ index e0b8aae..050db6e 100644
 +            persistAcrossSessions: true,
 +            runAt: 'document_start',
 +        });
-@@ -353,6 +524,16 @@ registerContentScripts.register = async function register() {
--    if ( toAdd.length !== 0 ) {
--        ubolLog(`Registered ${toAdd.map(v => v.id)} content (css/js)`);
--        try {
--            await browser.scripting.registerContentScripts(toAdd);
--        } catch(reason) {
--            ubolErr(`registerContentScripts/${reason}`);
-+    try {
++    }
++
+     try {
+-        await browser.scripting.unregisterContentScripts();
 +        if ( webextFlavor === 'safari' &&
 +             typeof browser.scripting.updateContentScripts === 'function' ) {
 +            // WebKit removes RegisteredContentScripts.db when the no-argument
@@ -8167,10 +8246,23 @@ index e0b8aae..050db6e 100644
 +                ubolLog(`Registered ${toAdd.map(v => v.id)} content (css/js)`);
 +                await browser.scripting.registerContentScripts(toAdd);
 +            }
-@@ -359,0 +541,3 @@ registerContentScripts.register = async function register() {
-+    } catch(reason) {
++        }
+     } catch(reason) {
+-        ubolErr(`unregisterContentScripts/${reason}`);
+-    }
+-
+-    if ( toAdd.length !== 0 ) {
+-        ubolLog(`Registered ${toAdd.map(v => v.id)} content (css/js)`);
+-        try {
+-            await browser.scripting.registerContentScripts(toAdd);
+-        } catch(reason) {
+-            ubolErr(`registerContentScripts/${reason}`);
+-        }
 +        ubolErr(`registerContentScripts/${reason}`);
 +        if ( webextFlavor === 'safari' || throwOnError ) { throw reason; }
+     }
+ 
+     await Promise.all([
 diff --git a/js/scripting/css-api.js b/js/scripting/css-api.js
 index 88c7b27..abbfcd7 100644
 --- a/js/scripting/css-api.js

@@ -50,7 +50,7 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `9cd2e9f6c3d62ef6154dd4dd9f94a5ef70a7ec7386bd2f05c11e29126b3aa6d6`、
+派生 SHA-256 は `62413b4155da10696fcdd45f28a898f7e3bc7e4653e2cf8a9a23ce4413f37f45`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
 `GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
@@ -162,9 +162,12 @@ update が対象行を delete してから add する際も DB が空になら�
 `RegisteredContentScripts.db` が unlink されることを避ける。ruleset details は ID 順へ正規化してから
 script 定義を作り、列挙順の揺れを変更と誤判定する cold-start update も防ぐ。
 local/session と realm 記録は同じ直列化・unknown-error 限定 retry 経路を使う。登録処理は
-実状態を再読込する3回の bounded convergence とし、register/update/remove の部分適用後も
+実状態を再読込する7回の bounded convergence とし、register/update/remove の部分適用後も
 sentinel を更新・削除せず exact readback まで進める。background の起動／wake ごとに必ず実行し、
 途中の API failure 後に sentinel だけが残った場合も欠落・stale 登録を自己修復する。
+通常の update で収束しない既存登録は、最終試行で不一致の ID だけを指定して削除・再登録する。
+sentinel と一致済みの登録を残し、削除の反映と sentinel の保持を再確認してから再登録する。
+再登録後も全項目の照合を必須とし、失敗時は不一致の ID・項目名を診断へ含める。
 background listener の `{ error }` 応答は UI 共通送信層で reject へ変換する。filtering/popup mode は
 content-script 更新失敗時に保存値を rollback し、popup slider、dashboard control、editor は旧値を
 保持して自動 reload を行わない。popup/dashboard は error を `role=alert` で表示し、restore/import は
