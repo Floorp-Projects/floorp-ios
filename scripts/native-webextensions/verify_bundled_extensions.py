@@ -185,7 +185,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "26eb98bacbfd3608b54b5dece6af711afa8c180d7c2078741ff1cf84a632e84e",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "ca9f06752eb6b931955823969e30685cf1f736569bbec7fdf852f2a0a6577729",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -285,11 +285,19 @@ EXPECTED = (
                         "js/settings.js",
                         "popup.html",
                     ],
-                }
+                },
+                {
+                    "description": "Backport the upstream removal of obsolete ublock-filters rule 5135 (/8b3ytkn.js): WebKit compiles its excludedRequestDomains into broad com/net/org ignore-following-rules entries that bypass unrelated third-party script blocks. Retain the remaining snapshot and update its compiled rule counts.",
+                    "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
+                    "paths": [
+                        "rulesets/main/ublock-filters.json",
+                        "rulesets/ruleset-details.json"
+                    ]
+                },
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "62413b4155da10696fcdd45f28a898f7e3bc7e4653e2cf8a9a23ce4413f37f45",
+            "sha256": "95ebc79c3cb918864090c2cb82b89db1e80fa73141b41f6f831acd80d8188e66",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",

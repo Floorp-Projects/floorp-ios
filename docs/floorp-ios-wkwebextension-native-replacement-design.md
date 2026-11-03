@@ -50,9 +50,20 @@ integration test で確認している。
 
 公式 uBOL Safari ZIP 2026.825.1619 から Floorp 派生 package を再現可能に生成する。
 upstream SHA-256 は `89dbaf3bfe913b77e959ac8473190b0992cd37c43714bf628713de13dce5bd94`、
-派生 SHA-256 は `62413b4155da10696fcdd45f28a898f7e3bc7e4653e2cf8a9a23ce4413f37f45`、
+派生 SHA-256 は `95ebc79c3cb918864090c2cb82b89db1e80fa73141b41f6f831acd80d8188e66`、
 source commit は `080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b`、license は
-`GPL-3.0-or-later` である。`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
+`GPL-3.0-or-later` である。
+上流の [2026.1026.1812 Safari package](https://github.com/uBlockOrigin/uBOL-home/releases/tag/2026.1026.1812)
+で削除済みの `/8b3ytkn.js` filter（旧 `ublock-filters` rule 5135）の削除も反映する。
+このルールの `excludedRequestDomains: ["com", "net", "org"]` は、実機の WebKit で
+元の URL 条件を持たない `ignore-following-rules` に変換され、無関係な第三者 script の遮断を
+回避させていた。残りのフィルターとサイト別例外は維持し、集計の plain／total rule count を
+各1件減らす。直前の派生 package からも extension identity と保存設定を保って移行する。
+2026-11-03 の iPhone Air（iOS 27.0、Floorp build 137→138）で、同じ既定リスト・Optimal 設定の
+AdBlock Tester は77→91点（各2回）、Turtlecute は93/132件遮断（各2回）だった。
+これらは各サイトの合成チェック結果であり、実際の全広告の遮断率や速度を示す値ではない。
+
+`uBOLite-floorp-ios-2026.825.1619.patch` は manifest に WebKit
 公開権限 `declarativeNetRequestFeedback` を宣言して upstream の Developer-mode Matched
 rules 導線を有効にし、popup の active tab にある数値の `windowId` を matched-rules の
 `browser.tabs.create` へ伝えて、同じ通常／プライベート window に明示的に開く。さらに、
