@@ -165,4 +165,129 @@ function clone(value) {
     ]);
 }
 
+sandbox.setTimeout = callback => setTimeout(callback, 0);
+const loggedErrors = [];
+sandbox.ubolErr = message => loggedErrors.push(message);
+
+function legacyRegistrationStore({ dropOnRegister = false, failRemoval = false } = {}) {
+    const scriptlet = {
+        ...clone(content),
+        id: 'ublock-filters.main',
+        matchOriginAsFallback: true,
+        world: 'MAIN',
+    };
+    const legacy = clone(scriptlet);
+    delete legacy.matchOriginAsFallback;
+    let visible = [ clone(sentinel), clone(content), legacy ];
+    const calls = { update: [], register: [], unregister: [] };
+    const scripting = {
+        async getRegisteredContentScripts() { return clone(visible); },
+        async updateContentScripts(rows) {
+            calls.update.push(clone(rows));
+        },
+        async registerContentScripts(rows) {
+            calls.register.push(clone(rows));
+            assert.ok(rows.every(row => !visible.some(other => other.id === row.id)));
+            visible.push(...rows.map(row => {
+                const saved = clone(row);
+                if ( dropOnRegister ) { delete saved.matchOriginAsFallback; }
+                return saved;
+            }));
+        },
+        async unregisterContentScripts({ ids }) {
+            calls.unregister.push(clone(ids));
+            assert.ok(!ids.includes(sentinel.id), 'retain the database sentinel');
+            assert.ok(!ids.includes(content.id), 'retain unchanged protection');
+            visible = visible.filter(row => !ids.includes(row.id));
+            assert.ok(visible.some(row => row.id === sentinel.id));
+            if ( failRemoval ) {
+                failRemoval = false;
+                throw new Error('Safari rejected after removing the legacy row');
+            }
+        },
+    };
+    return { scripting, calls, desired: [ sentinel, content, scriptlet ] };
+}
+
+{
+    const { scripting, calls, desired } = legacyRegistrationStore();
+    await sandbox.reconcileUnderTest(scripting, desired);
+    assert.equal(loggedErrors.length, 0, 'successful recovery must not report a runtime error');
+    assert.ok(calls.update.length > 0, 'try ordinary updates before replacement');
+    assert.deepEqual(calls.unregister, [[ 'ublock-filters.main' ]]);
+    assert.deepEqual(calls.register.map(rows => rows.map(row => row.id)), [
+        [ 'ublock-filters.main' ],
+    ]);
+    assert.equal(
+        (await scripting.getRegisteredContentScripts()).find(row =>
+            row.id === 'ublock-filters.main').matchOriginAsFallback,
+        true
+    );
+    const before = clone(calls);
+    await sandbox.reconcileUnderTest(scripting, desired);
+    assert.deepEqual(calls, before, 'a converged wake must not rewrite scripts');
+}
+
+{
+    const { scripting, desired } = legacyRegistrationStore({ dropOnRegister: true });
+    await assert.rejects(
+        sandbox.reconcileUnderTest(scripting, desired),
+        error => /Safari content-script reconciliation did not converge/.test(error.message) &&
+            /ublock-filters.main/.test(error.message) &&
+            /matchOriginAsFallback/.test(error.message)
+    );
+    assert.equal(loggedErrors.length, 1, 'report the final failure after recovery is exhausted');
+}
+
+{
+    const { scripting, desired } = legacyRegistrationStore({ failRemoval: true });
+    await assert.rejects(
+        sandbox.reconcileUnderTest(scripting, desired),
+        /Safari rejected after removing the legacy row/
+    );
+    await sandbox.reconcileUnderTest(scripting, desired);
+    const rows = await scripting.getRegisteredContentScripts();
+    assert.deepEqual(rows.map(row => row.id).sort(), desired.map(row => row.id).sort());
+}
+
+{
+    const { scripting, calls, desired } = legacyRegistrationStore();
+    const read = scripting.getRegisteredContentScripts;
+    const unregister = scripting.unregisterContentScripts;
+    const stale = await read();
+    let removed = false;
+    scripting.unregisterContentScripts = async options => {
+        await unregister(options);
+        removed = true;
+    };
+    scripting.getRegisteredContentScripts = async () => removed ? clone(stale) : read();
+    await assert.rejects(
+        sandbox.reconcileUnderTest(scripting, desired),
+        /Safari content-script removal did not converge/
+    );
+    assert.equal(calls.register.length, 0, 'do not register until removal is confirmed');
+    scripting.getRegisteredContentScripts = read;
+    await sandbox.reconcileUnderTest(scripting, desired);
+}
+
+{
+    const { scripting, calls, desired } = legacyRegistrationStore();
+    const read = scripting.getRegisteredContentScripts;
+    const unregister = scripting.unregisterContentScripts;
+    let removed = false;
+    scripting.unregisterContentScripts = async options => {
+        await unregister(options);
+        removed = true;
+    };
+    scripting.getRegisteredContentScripts = async () => {
+        const rows = await read();
+        return removed ? rows.filter(row => row.id !== sentinel.id) : rows;
+    };
+    await assert.rejects(
+        sandbox.reconcileUnderTest(scripting, desired),
+        /Safari registration sentinel verification failed/
+    );
+    assert.equal(calls.register.length, 0, 'do not continue after losing the sentinel');
+}
+
 console.log('uBO Safari content-script reconciliation tests passed');

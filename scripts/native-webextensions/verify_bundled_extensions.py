@@ -185,7 +185,7 @@ EXPECTED = (
         "review_license_marker": "GNU GPL v3.0 or later",
         "provenance_file": "uBOLite-floorp-ios-2026.825.1619.provenance.json",
         "support_files": {
-            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "65d90d4aeb20e4ec7108671e2d5dcbda3e7d92cb853cd2ba6e9b41c4b23a3b7a",
+            "firefox-ios/Floorp/NativeWebExtensions/Bundled/uBOLite-floorp-ios-2026.825.1619.patch": "26eb98bacbfd3608b54b5dece6af711afa8c180d7c2078741ff1cf84a632e84e",
             "scripts/package-ubol-ios.sh": "f60cc1bca59e9894c24fa28345169ebfe9b5794a3bfde7aba0ea4e170dfc26b0",
         },
         "provenance": {
@@ -216,7 +216,7 @@ EXPECTED = (
                     ],
                 },
                 {
-                    "description": "Make startup, wake, permission, administrator-policy, filtering-mode, static/derived/user DNR, imported-list, content-script, and user-script reconciliation durable and fail closed: use an immutable registered-content sentinel, case-normalize WebKit registration readback, and apply bounded ID-diff convergence; validate resources before mutation; use atomic or rollback-verified DNR updates; retain the first protected mutation error until a full recovery succeeds; serialize managed changes through the settings Web Lock and background queue, preserve changes arriving during awaits, retry idempotent native side effects even after their config value was saved, and defer persistent failures without a background wake loop; reconcile all protection surfaces and managed popup, badge, and strict-block side effects from durable state before ready; request a crash-resumable visible extension-page foreground reconciliation when WebKit rejects static ruleset updates from an MV3 background page; and trust Floorp lifecycle control messages only when their canonical sender origin and runtime ID match, or when WebKit supplies an exact runtime-owned sender URL origin, covering opaque or inconsistent physical-device sender metadata without accepting web-page or lookalike hosts.",
+                    "description": "Make startup, wake, permission, administrator-policy, filtering-mode, static/derived/user DNR, imported-list, content-script, and user-script reconciliation durable and fail closed: use an immutable registered-content sentinel, case-normalize WebKit registration readback, apply bounded ID-diff convergence, and replace only persistently mismatched non-sentinel script IDs after ordinary updates fail while retaining exact readback verification, reporting mismatched fields, and emitting runtime errors only after recovery is exhausted; validate resources before mutation; use atomic or rollback-verified DNR updates; retain the first protected mutation error until a full recovery succeeds; serialize managed changes through the settings Web Lock and background queue, preserve changes arriving during awaits, retry idempotent native side effects even after their config value was saved, and defer persistent failures without a background wake loop; reconcile all protection surfaces and managed popup, badge, and strict-block side effects from durable state before ready; request a crash-resumable visible extension-page foreground reconciliation when WebKit rejects static ruleset updates from an MV3 background page; and trust Floorp lifecycle control messages only when their canonical sender origin and runtime ID match, or when WebKit supplies an exact runtime-owned sender URL origin, covering opaque or inconsistent physical-device sender metadata without accepting web-page or lookalike hosts.",
                     "patch": "uBOLite-floorp-ios-2026.825.1619.patch",
                     "paths": [
                         "js/admin.js",
@@ -289,7 +289,7 @@ EXPECTED = (
             ],
             "license": "GPL-3.0-or-later",
             "release": "2026.825.1619",
-            "sha256": "9cd2e9f6c3d62ef6154dd4dd9f94a5ef70a7ec7386bd2f05c11e29126b3aa6d6",
+            "sha256": "62413b4155da10696fcdd45f28a898f7e3bc7e4653e2cf8a9a23ce4413f37f45",
             "sourceCommit": "080d4a2c9d8264e076daa512cf7bbd97f8a2ca6b",
             "strictMinimumSafariVersion": "26.0",
             "upstreamAsset": "uBOLite_2026.825.1619.safari.zip",
@@ -819,6 +819,11 @@ EXPECTED = (
                 "details.id !== safariRegistrationSentinelId",
                 "await scripting.registerContentScripts(toRegister);\n            }\n            if ( toUpdate.length !== 0 ) {",
                 "scripting.updateContentScripts(toUpdate)",
+                "attempt === retryDelays.length - 1",
+                "await scripting.unregisterContentScripts({ ids });",
+                "comparableRegistration(retainedSentinel || {})",
+                "await scripting.registerContentScripts(toUpdate);",
+                "registrationDifferences(after, desired)",
                 "scripting.unregisterContentScripts({ ids: removeIds })",
                 "registrationMismatch(after, desired)",
                 "details.world.toUpperCase()",
