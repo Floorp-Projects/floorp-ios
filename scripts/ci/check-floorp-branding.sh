@@ -1058,42 +1058,38 @@ forbid_fixed_in_files \
 
 require_hash \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore.png" \
-    "a16249a3edf1accb968c40a0680f07889dbe99572bbe191edae9d8383d06ed8f" \
+    "39dbd040c32788c00e2cf734c55f455cdcecfdf7ba22c3db03110643b5557316" \
     "Primary app icon uses the approved Floorp artwork"
 require_opaque_rgb_png \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore.png" \
     "Primary default app icon uses an RGB PNG without an alpha channel"
 require_hash \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore-dark.png" \
-    "10df560e6b2ddc405a7add6957e97b49cdcd2abe2a1b78297b4a56b578208095" \
+    "0f7bf7896708a5b5ae777319687dba8bb23c58968f329919f4821173d26e30f7" \
     "Primary dark app icon uses the approved Floorp artwork"
 require_hash \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore-tinted.png" \
-    "f3a3166d1781e877fd7e1522530e40655d6507807117be011625a325a38b2ef6" \
+    "b2acf45549471d6954fa9a352e01418d16e42d205ab89ec54321f25548c1e390" \
     "Primary tinted app icon uses the approved Floorp artwork"
 require_grayscale_png \
     "firefox-ios/Client/Assets/AppIcons.xcassets/AppIcon.appiconset/appstore-tinted.png" \
     "Primary tinted app icon uses a grayscale PNG color model"
 require_hash \
     "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/icon.json" \
-    "048fb4219d24727a2fa77bc0874e710226eba344e166cae9df7765e61066b778" \
+    "0deefa28dd1a3ccc6618185af778ad40384cf046a0667222bacc6c79617c8102" \
     "Primary Liquid Glass icon uses the approved Floorp composition"
 require_hash \
-    "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/Assets/nightly-1.svg" \
-    "06f1419b59987939acadcfa45020ebc18714121d97cfaa6ff18515e79e14ef3f" \
+    "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/Assets/1_f.svg" \
+    "7a430cc2ac9f61f3e578081a4176913e868d115dea7a11e588975d0dfbb305ba" \
     "Primary Liquid Glass icon layer 1 uses the approved Floorp artwork"
 require_hash \
-    "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/Assets/nightly-2.svg" \
-    "dd429c6b222769ec503e6a387269a5b97aab4345d537a0c74a9613a2a44fd7a4" \
+    "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/Assets/2_hex.svg" \
+    "8f0f1cd2bbfbc2267b05edf5868e4d226d6159666eb74bde8288a63a134c83e0" \
     "Primary Liquid Glass icon layer 2 uses the approved Floorp artwork"
 require_hash \
-    "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/Assets/nightly-3.svg" \
-    "df55914738d67d644972d6eae3f70b22526e68145412bf4f5467e1e57efc75bc" \
+    "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/Assets/3_bg.svg" \
+    "90f48b226e5bf93d72ff2ed5e453adc3113b7656b020f57642037fac350b86c9" \
     "Primary Liquid Glass icon layer 3 uses the approved Floorp artwork"
-require_hash \
-    "firefox-ios/Client/Assets/LiquidGlassAppIcons/AppIcon.icon/Assets/nightly-4.svg" \
-    "df55914738d67d644972d6eae3f70b22526e68145412bf4f5467e1e57efc75bc" \
-    "Primary Liquid Glass icon layer 4 uses the approved Floorp artwork"
 
 if (( failures > 0 )); then
     printf '\nFloorp branding check failed with %d issue(s).\n' "$failures" >&2
